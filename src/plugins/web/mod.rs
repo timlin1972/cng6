@@ -19,6 +19,7 @@ use ratatui::layout::Rect;
 use crate::plugin::{Ctx, Plugin, parse_bool, parse_usize};
 use crate::plugins::wallpaper;
 use crate::remote;
+use crate::webui::{Button, Card, Status, WebMeta};
 use server::{Config, Handle};
 
 const DEFAULT_PORT: u16 = 9760;
@@ -29,6 +30,8 @@ struct Running {
     handle: Handle,
     /// 啟動時使用的設定
     config: Config,
+    /// 可以連線的網址(啟動時算好, 狀態卡片不用每次查網卡)
+    urls: Vec<String>,
 }
 
 pub struct Web {
@@ -88,6 +91,7 @@ impl Web {
                 }
                 self.running = Some(Running {
                     handle,
+                    urls: Self::urls(&self.config),
                     config: self.config.clone(),
                 });
                 self.restart_notice = false;
@@ -103,13 +107,25 @@ impl Web {
         }
     }
 
-    fn show_urls(&self, ctx: &mut Ctx) {
-        let cfg = self.running.as_ref().map_or(&self.config, |r| &r.config);
+    fn urls(cfg: &Config) -> Vec<String> {
         let scheme = if cfg.https { "https" } else { "http" };
         let port = cfg.port;
-        ctx.info(format!("  {scheme}://localhost:{port}/"));
-        for ip in server::local_ips() {
-            ctx.info(format!("  {scheme}://{ip}:{port}/"));
+        let mut urls = vec![format!("{scheme}://localhost:{port}/")];
+        urls.extend(
+            server::local_ips()
+                .iter()
+                .map(|ip| format!("{scheme}://{ip}:{port}/")),
+        );
+        urls
+    }
+
+    fn show_urls(&self, ctx: &mut Ctx) {
+        let urls = match &self.running {
+            Some(r) => r.urls.clone(),
+            None => Self::urls(&self.config),
+        };
+        for url in urls {
+            ctx.info(format!("  {url}"));
         }
     }
 
@@ -239,6 +255,46 @@ impl Plugin for Web {
             ctx.warn("web 設定已變更, 執行 web restart 後生效");
         }
         self.drain(ctx);
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("Web", "web", "purple"))
+    }
+
+    fn web_card(&self) -> Option<Card> {
+        let card = match &self.running {
+            Some(r) => {
+                let scheme = if r.config.https { "https" } else { "http" };
+                let mut card = Card::new()
+                    .status(Status::Good)
+                    .summary(format!("執行中 · {scheme} · port {}", r.config.port))
+                    .table([
+                        ("狀態", "執行中".to_string()),
+                        ("port", r.config.port.to_string()),
+                        ("協定", scheme.to_string()),
+                    ]);
+                if self.restart_needed() {
+                    card = card.text("設定已變更, 重新啟動後生效", Some(Status::Warning));
+                }
+                for url in r.urls.iter().filter(|u| !u.contains("localhost")) {
+                    card = card.link(url.clone(), url.clone());
+                }
+                card.buttons(vec![
+                    Button::new("重新啟動", "/web restart").confirm(),
+                    Button::new("停止", "/web stop").confirm(),
+                ])
+            }
+            None => Card::new()
+                .status(Status::Off)
+                .summary(format!("未啟動 · port {}", self.config.port))
+                .text("web 伺服器沒有在執行", Some(Status::Off))
+                .buttons(vec![Button::new("啟動", "/web start")]),
+        };
+        Some(card.toggle(
+            "在 Message 顯示網頁請求",
+            "web.log_requests",
+            self.log_requests,
+        ))
     }
 
     fn render(&mut self, _frame: &mut Frame, _area: Rect, _focused: bool) {}

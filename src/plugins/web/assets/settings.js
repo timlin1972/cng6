@@ -6,30 +6,16 @@ const SettingsApp = (() => {
   const SESSION = `settings-${Math.random().toString(36).slice(2, 10)}`;
   const POLL_MS = 3000;
 
-  const GROUPS = {
-    appearance: { name: "外觀", icon: "appearance" },
-    wallpaper: { name: "桌布", icon: "wallpaper" },
-    cli: { name: "CLI", icon: "cli" },
-    message: { name: "Message", icon: "message" },
-    system: { name: "System", icon: "system" },
-    web: { name: "Web", icon: "web" },
-    panel: { name: "Panel 位置", icon: "panel" },
-  };
   // 外觀是這個瀏覽器自己的偏好, 不在 settings.conf 裡
   const LOCAL = "appearance";
-  const ORDER = [LOCAL, "wallpaper", "cli", "message", "system", "web", "panel"];
-  const ICONS = {
-    wallpaper: `<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>`,
-    appearance: `<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="#fff"/>`,
-    cli: `<path d="M5 7l5 5-5 5"/><path d="M12 18h7"/>`,
-    message: `<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.4A8 8 0 1 1 21 12z"/>`,
-    system: `<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>`,
-    web: `<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>`,
-    panel: `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16M3 12h9"/>`,
-    other: `<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>`,
-  };
-  const svg = (name) =>
-    `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.other}</svg>`;
+  const LOCAL_META = { title: "外觀", icon: "appearance", color: "indigo" };
+
+  // 分組的名稱、圖示、顏色來自 plugin(Apps); 沒有描述的用分組名稱與通用圖示
+  function metaOf(g) {
+    if (g === LOCAL) return LOCAL_META;
+    const a = Apps.find(g);
+    return a ? { title: a.title, icon: a.icon, color: a.color } : { title: g, icon: "other", color: "gray" };
+  }
 
   const groupOf = (key) => key.split(".")[0];
 
@@ -232,9 +218,11 @@ const SettingsApp = (() => {
     // ---- 版面 ----
     function groupsPresent() {
       const keys = [LOCAL, ...new Set(rows.map((r) => groupOf(r.key)))];
+      // 外觀在最前面, 其他依 plugin 註冊順序
+      const order = [LOCAL, ...Apps.list.map((a) => a.name)];
       return keys.sort((a, b) => {
-        const ia = ORDER.indexOf(a);
-        const ib = ORDER.indexOf(b);
+        const ia = order.indexOf(a);
+        const ib = order.indexOf(b);
         return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
       });
     }
@@ -242,12 +230,11 @@ const SettingsApp = (() => {
     function renderNav() {
       nav.replaceChildren();
       for (const g of groupsPresent()) {
-        const meta = GROUPS[g] || { name: g, icon: "other" };
+        const meta = metaOf(g);
         const btn = h("button", `set-nav ${g === current && !search.value ? "on" : ""}`);
-        const icon = h("span", `set-icon i-${meta.icon}`);
-        icon.innerHTML = svg(meta.icon);
+        const icon = Apps.icon(meta.icon, meta.color, "set-icon");
         const count = rows.filter((r) => groupOf(r.key) === g && r.value !== r.default).length;
-        btn.append(icon, h("span", "set-nav-name", meta.name));
+        btn.append(icon, h("span", "set-nav-name", meta.title));
         if (count) btn.appendChild(h("span", "set-nav-count", String(count)));
         btn.addEventListener("click", () => {
           current = g;
@@ -310,17 +297,16 @@ const SettingsApp = (() => {
         if (!hits.length) pane.appendChild(h("div", "set-empty", `找不到「${search.value}」`));
         for (const g of groupsPresent()) {
           const list = hits.filter((r) => groupOf(r.key) === g);
-          if (list.length) pane.appendChild(section((GROUPS[g] || { name: g }).name, list));
+          if (list.length) pane.appendChild(section(metaOf(g).title, list));
         }
         return;
       }
       if (!groupsPresent().includes(current)) current = groupsPresent()[0];
       if (current === LOCAL) return renderAppearance();
-      const meta = GROUPS[current] || { name: current, icon: "other" };
+      const meta = metaOf(current);
       const head = h("header", "set-head");
-      const icon = h("span", `set-icon big i-${meta.icon}`);
-      icon.innerHTML = svg(meta.icon);
-      head.append(icon, h("h1", null, meta.name));
+      const icon = Apps.icon(meta.icon, meta.color, "set-icon big");
+      head.append(icon, h("h1", null, meta.title));
       pane.appendChild(head);
 
       let extra = null;
@@ -354,7 +340,7 @@ const SettingsApp = (() => {
         const all = h("button", "set-link", `全部恢復預設 (${modified.length})`);
         all.addEventListener("click", async () => {
           for (const r of modified) await run(`/settings reset ${r.key}`);
-          showToast(`${meta.name} 已全部恢復預設`);
+          showToast(`${meta.title} 已全部恢復預設`);
         });
         pane.appendChild(all);
       }
@@ -511,11 +497,10 @@ const SettingsApp = (() => {
     ];
 
     function renderAppearance() {
-      const meta = GROUPS[LOCAL];
+      const meta = LOCAL_META;
       const head = h("header", "set-head");
-      const icon = h("span", `set-icon big i-${meta.icon}`);
-      icon.innerHTML = svg(meta.icon);
-      head.append(icon, h("h1", null, meta.name));
+      const icon = Apps.icon(meta.icon, meta.color, "set-icon big");
+      head.append(icon, h("h1", null, meta.title));
       pane.appendChild(head);
 
       const s = h("section", "set-section");
@@ -554,6 +539,8 @@ const SettingsApp = (() => {
     search.addEventListener("input", render);
     render();
     refresh();
+    // 分組名稱與圖示來自 plugin 清單
+    Apps.load().then(render, () => {});
     const timer = setInterval(() => {
       if (!closed && !document.hidden) refresh();
     }, POLL_MS);

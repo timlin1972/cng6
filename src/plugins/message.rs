@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::plugin::{Ctx, Event, Level, PanelRect, Plugin, panel_block, parse_bool, parse_usize};
+use crate::webui::WebMeta;
 
 pub struct Message {
     /// (等級, 時間 HH:MM:SS, 內容); 時間一律記錄, 是否顯示由 message.timestamp 決定
@@ -153,6 +154,10 @@ impl Plugin for Message {
             _ => return false,
         }
         true
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("Message", "message", "blue"))
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, focused: bool) {

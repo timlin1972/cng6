@@ -109,6 +109,8 @@ const Shell = (() => {
       return request("exec", line);
     },
     complete: (before) => request("complete", before),
+    /** 游標前的文字之後可以接的字(手機點選式指令), 回傳 [{name, desc, more, placeholder}] */
+    candidates: async (before) => (await request("candidates", before))?.candidates || [],
     describe: (before) => request("describe", before),
     clearMessages,
     // 進入頁面時取得目前層次(空指令不會產生輸出)

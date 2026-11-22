@@ -11,6 +11,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use crate::webui::WebMeta;
+
 use crate::plugin::{
     Action, Ctx, Event, PanelRect, Plugin, SettingRow, complete_from_help, panel_block,
 };
@@ -175,6 +177,10 @@ impl Plugin for SettingsPanel {
             _ => return false,
         }
         true
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("設定", "settings", "gray"))
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, focused: bool) {

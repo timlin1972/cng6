@@ -11,7 +11,8 @@ use tokio::sync::oneshot;
 
 use super::server::Peer;
 use crate::plugin::{Level, SettingRow};
-use crate::remote::{self, Op, Request};
+use crate::remote::{self, Candidate, Op, Request};
+use crate::webui::AppInfo;
 
 #[derive(Deserialize)]
 pub struct CliRequest {
@@ -34,6 +35,10 @@ struct CliResponse {
     replacement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     settings: Option<Vec<SettingRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    apps: Option<Vec<AppInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidates: Option<Vec<Candidate>>,
 }
 
 fn level_name(level: Level) -> &'static str {
@@ -55,10 +60,12 @@ pub async fn cli(
         "complete" => Op::Complete,
         "describe" => Op::Describe,
         "settings" => Op::Settings,
+        "apps" => Op::Apps,
+        "candidates" => Op::Candidates,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                "op 必須是 exec / complete / describe / settings",
+                "op 必須是 exec / complete / describe / settings / apps / candidates",
             )
                 .into_response();
         }
@@ -87,6 +94,8 @@ pub async fn cli(
                 .collect(),
             replacement: reply.replacement,
             settings: reply.settings,
+            apps: reply.apps,
+            candidates: reply.candidates,
         })
         .into_response(),
         _ => (StatusCode::GATEWAY_TIMEOUT, "指令沒有回應").into_response(),

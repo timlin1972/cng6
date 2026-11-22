@@ -1,41 +1,50 @@
 // cng6 PC 版桌面: Dock 與視窗管理(開啟、拖曳、改大小、最小化、最大化、關閉)
 "use strict";
 
-// 桌面上的程式。之後要加新的視窗, 在這裡加一筆並提供 content()。
-const APPS = [
-  {
-    id: "cli",
-    title: "CLI",
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5-5 5"/><path d="M12 18h7"/></svg>`,
+// 桌面上的程式: CLI 與設定是內建的, 其他來自 plugin(/api/cli 的 "apps", 見 apps.js)
+// - plugin 有自訂畫面(view): 開啟對應的前端模組
+// - plugin 只有狀態卡片(card): 開啟通用的卡片視窗
+// 新 plugin 只要在 Rust 提供 web_meta / web_card / web_view, 這裡不用改。
+const CORE = {
+  cli: {
     size: [760, 460],
     // 預設位置: 視窗中心在桌面的 (x, y) 比例
     at: [0.5, 0.55],
-    content(el) {
-      return CliApp.mount(el);
-    },
+    content: (el) => CliApp.mount(el),
   },
-  {
-    id: "system",
-    title: "System",
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>`,
-    size: [980, 720],
-    at: [0.5, 0.45],
-    content(el) {
-      // 回傳的函式會在視窗關閉時呼叫(停止即時資料)
-      return SystemApp.mount(el);
-    },
-  },
-  {
-    id: "settings",
-    title: "Settings",
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`,
+  settings: {
     size: [860, 560],
     at: [0.55, 0.42],
-    content(el) {
-      return SettingsApp.mount(el);
-    },
+    content: (el) => SettingsApp.mount(el),
   },
-];
+};
+// 自訂畫面的預設大小
+const VIEW_SIZE = { system: [980, 720] };
+
+let APPS = [];
+
+function buildApps(list) {
+  const meta = (name, title, icon, color) => {
+    const a = list.find((x) => x.name === name);
+    return a ? { title: a.title, icon: a.icon, color: a.color } : { title, icon, color };
+  };
+  const apps = [{ id: "cli", ...meta("cli", "CLI", "cli", "dark"), ...CORE.cli }];
+  for (const a of list) {
+    if (a.name in CORE) continue;
+    const base = { id: a.name, title: a.title, icon: a.icon, color: a.color, at: [0.5, 0.45] };
+    if (a.view && Apps.views[a.view]) {
+      apps.push({
+        ...base,
+        size: VIEW_SIZE[a.view] || [900, 640],
+        content: (el) => Apps.views[a.view].mount(el, { device: "pc" }),
+      });
+    } else if (a.card) {
+      apps.push({ ...base, size: [420, 460], content: (el) => Apps.mountCard(el, a.name) });
+    }
+  }
+  apps.push({ id: "settings", ...meta("settings", "設定", "settings", "gray"), ...CORE.settings });
+  return apps;
+}
 
 const BTN = {
   min: `<svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg>`,
@@ -108,11 +117,17 @@ function clamp(r) {
 function defaultRect(app) {
   const a = area();
   const [w, h] = [Math.min(app.size[0], a.w - 40), Math.min(app.size[1], a.h - 40)];
+  // 每多開一個視窗就往右下錯開, 不會完全疊在一起
+  const offset = (openCount % 6) * 28;
   if (app.at) {
     const [fx, fy] = app.at;
-    return { x: Math.max(10, a.w * fx - w / 2), y: Math.min(Math.max(10, a.h * fy - h / 2), a.h - h - 10), w, h };
+    return {
+      x: Math.max(10, a.w * fx - w / 2 + offset),
+      y: Math.min(Math.max(10, a.h * fy - h / 2 + offset), a.h - h - 10),
+      w,
+      h,
+    };
   }
-  const offset = (openCount % 6) * 28;
   return { x: Math.max(20, (a.w - w) / 2 - 80 + offset), y: Math.max(20, (a.h - h) / 3 + offset), w, h };
 }
 
@@ -152,8 +167,8 @@ function openApp(app) {
   el.className = "window opening";
   el.innerHTML = `
     <div class="titlebar">
-      <span class="icon app-icon ${app.id}" style="border-radius:4px;display:grid;place-items:center">${app.icon.replace("<svg", '<svg style="width:12px;height:12px"')}</span>
-      <span class="title">${app.title}</span>
+      <span class="icon-slot"></span>
+      <span class="title"></span>
       <div class="buttons">
         <button class="min" title="最小化">${BTN.min}</button>
         <button class="max" title="最大化">${BTN.max}</button>
@@ -162,6 +177,8 @@ function openApp(app) {
     </div>
     <div class="content"></div>
     ${["n", "s", "e", "w", "ne", "nw", "se", "sw"].map((d) => `<div class="resize ${d}" data-dir="${d}"></div>`).join("")}`;
+  el.querySelector(".icon-slot").replaceWith(Apps.icon(app.icon, app.color, "icon"));
+  el.querySelector(".title").textContent = app.title;
   const unmount = app.content(el.querySelector(".content"));
   desktop.appendChild(el);
 
@@ -411,21 +428,41 @@ window.Desktop = {
   },
 };
 
-// ---- Dock ----
-for (const app of APPS) {
-  const item = document.createElement("button");
-  item.className = "dock-item";
-  item.dataset.app = app.id;
-  item.innerHTML = `<span class="label">${app.title}</span><span class="app-icon ${app.id}">${app.icon}</span><span class="dot"></span>`;
-  item.addEventListener("click", () => {
-    const w = wins.get(app.id);
-    if (!w) openApp(app);
-    else if (w.minimized) unminimize(w);
-    else if (topVisible() === app.id) minimize(w);
-    else focusWin(app.id);
-  });
-  dock.appendChild(item);
+// ---- Dock(從 plugin 清單產生) ----
+function buildDock() {
+  dock.replaceChildren();
+  for (const app of APPS) {
+    const item = document.createElement("button");
+    item.className = "dock-item";
+    item.dataset.app = app.id;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = app.title;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    item.append(label, Apps.icon(app.icon, app.color), dot);
+    if (wins.has(app.id)) item.classList.add("running");
+    item.addEventListener("click", () => {
+      const w = wins.get(app.id);
+      if (!w) openApp(app);
+      else if (w.minimized) unminimize(w);
+      else if (topVisible() === app.id) minimize(w);
+      else focusWin(app.id);
+    });
+    dock.appendChild(item);
+  }
 }
+
+APPS = buildApps([]);
+buildDock();
+Apps.load()
+  .then((list) => {
+    APPS = buildApps(list);
+    buildDock();
+  })
+  .catch(() => {
+    /* 讀不到 plugin 清單時只有 CLI 與設定 */
+  });
 
 // 點桌面空白處: 沒有作用中的視窗
 desktop.addEventListener("pointerdown", (e) => {

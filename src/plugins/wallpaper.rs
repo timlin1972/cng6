@@ -14,6 +14,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::plugin::{Action, Ctx, Plugin, complete_from_help, parse_usize};
+use crate::webui::{Button, Card, WebMeta};
 
 pub const DEFAULT: &str = "default";
 const DEFAULT_DIR: &str = "wallpapers";
@@ -266,6 +267,39 @@ impl Plugin for Wallpaper {
             // 輪播不寫入設定檔
             self.show(&next);
         }
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("桌布", "wallpaper", "teal"))
+    }
+
+    fn web_card(&self) -> Option<Card> {
+        let st = self.shared.get();
+        let count = self.shared.list().len();
+        let rotate = if self.rotate.is_zero() {
+            "關閉".to_string()
+        } else {
+            format!("每 {} 分鐘", self.rotate.as_secs() / 60)
+        };
+        let showing = if st.showing == DEFAULT {
+            "預設漸層".to_string()
+        } else {
+            st.showing.clone()
+        };
+        Some(
+            Card::new()
+                .summary(format!("{showing} · {count} 張"))
+                .table([
+                    ("目前", showing),
+                    ("圖片", format!("{count} 張")),
+                    ("輪播", rotate),
+                ])
+                .buttons(vec![
+                    Button::new("上一張", "/wallpaper prev"),
+                    Button::new("下一張", "/wallpaper next"),
+                    Button::new("預設", "/wallpaper set default"),
+                ]),
+        )
     }
 
     fn render(&mut self, _frame: &mut Frame, _area: Rect, _focused: bool) {}

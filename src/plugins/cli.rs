@@ -10,6 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::parse::in_quote;
 use crate::plugin::{Action, Ctx, Event, Plugin, parse_bool, parse_usize};
+use crate::webui::WebMeta;
 
 /// 指令歷史檔(在目前目錄)
 const HISTORY_FILE: &str = "cli_history.txt";
@@ -343,6 +344,10 @@ impl Plugin for Cli {
                 self.cursor = n;
             }
         }
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("CLI", "cli", "dark"))
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, focused: bool) {

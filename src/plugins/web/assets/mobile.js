@@ -1,0 +1,771 @@
+// cng6 手機版: 底部三個分頁(總覽 / 指令 / 設定), 實用優先
+//
+// - 總覽: 各 plugin 的狀態卡片(apps.js), 有自訂畫面的可以點進去
+// - 指令: 點選式組出指令(不用打字), 也可以直接輸入
+// - 設定: iOS 設定風格的列表, 外觀與桌布也在這裡
+"use strict";
+
+(() => {
+  const $ = (sel, root = document) => root.querySelector(sel);
+  function h(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+  // 和 src/parse.rs 的 quote_arg 相同
+  function quoteArg(a) {
+    if (a !== "" && !/[\s"'\\]/.test(a)) return a;
+    return `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  const chevron = () => {
+    const s = h("span", "m-chev");
+    s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>`;
+    return s;
+  };
+
+  // ---------------------------------------------------------- 提示訊息
+  const toastEl = $(".m-toast");
+  let toastTimer = null;
+  function toast(text, ok = true) {
+    toastEl.textContent = text;
+    toastEl.dataset.ok = ok;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
+  }
+
+  // ---------------------------------------------------------- 連線狀態
+  const live = $(".m-live");
+  function setLive(ok) {
+    live.dataset.state = ok ? "on" : "off";
+    $(".txt", live).textContent = ok ? "即時" : "離線";
+  }
+
+  // ---------------------------------------------------------- 分頁與頁面堆疊
+  // 每個分頁有自己的堆疊, 切換分頁時保留狀態(例如輸入到一半的指令)
+  const main = $(".m-main");
+  const stacks = { overview: [], cli: [], settings: [] };
+  let tab = "overview";
+  const backBtn = $(".m-back");
+  const titleEl = $(".m-title");
+
+  function top(t = tab) {
+    return stacks[t][stacks[t].length - 1];
+  }
+
+  function show() {
+    for (const [t, stack] of Object.entries(stacks)) {
+      stack.forEach((p, i) => (p.el.hidden = !(t === tab && i === stack.length - 1)));
+    }
+    const p = top();
+    titleEl.textContent = p.title;
+    const prev = stacks[tab][stacks[tab].length - 2];
+    backBtn.hidden = !prev;
+    if (prev) $("span", backBtn).textContent = prev.title;
+    document.querySelectorAll(".m-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+    p.onShow && p.onShow();
+  }
+
+  /** page: { title, el, onShow?, destroy? } */
+  function push(t, page) {
+    page.el.classList.add("m-page");
+    main.appendChild(page.el);
+    stacks[t].push(page);
+    if (t === tab) {
+      show();
+      main.scrollTop = 0;
+    }
+  }
+
+  function pop() {
+    if (stacks[tab].length < 2) return;
+    const p = stacks[tab].pop();
+    p.destroy && p.destroy();
+    p.el.remove();
+    show();
+  }
+
+  backBtn.addEventListener("click", pop);
+  document.querySelectorAll(".m-tabs button").forEach((b) =>
+    b.addEventListener("click", () => {
+      // 再點一次目前的分頁: 回到第一頁
+      if (b.dataset.tab === tab) while (stacks[tab].length > 1) pop();
+      tab = b.dataset.tab;
+      show();
+    }),
+  );
+
+  // ====================================================================
+  // 總覽
+  // ====================================================================
+  const STATUS_ICON = { warning: "▲", critical: "●", off: "○", good: "●" };
+  const RANK = { critical: 0, warning: 1 };
+
+  function overviewPage() {
+    const el = h("div", "m-overview");
+    const list = h("div", "m-list");
+    const foot = h("div", "m-foot");
+    el.append(list, foot);
+    let timer = null;
+
+    async function refresh() {
+      try {
+        await Apps.load();
+        setLive(true);
+      } catch {
+        setLive(false);
+        return;
+      }
+      render();
+    }
+
+    // 清單: 每個項目一列(名稱 + 摘要 + 狀態), 點了才進到細節
+    function render() {
+      const apps = Apps.list.filter((a) => a.card || (a.view && Apps.views[a.view]));
+      const sorted = apps
+        .map((a, i) => ({ a, i }))
+        .sort((x, y) => (RANK[x.a.card?.status] ?? 9) - (RANK[y.a.card?.status] ?? 9) || x.i - y.i)
+        .map((x) => x.a);
+      list.replaceChildren(...sorted.map(row));
+      if (!sorted.length) list.appendChild(h("div", "m-empty", "還沒有任何 plugin 提供狀態"));
+      foot.textContent = `更新於 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;
+    }
+
+    function row(app) {
+      const r = h("button", "m-row nav m-app-row");
+      const st = app.card?.status;
+      if (st) r.dataset.status = st;
+      const t = h("div", "m-row-text");
+      t.append(h("div", "m-row-name ui", app.title), h("div", "m-row-desc", app.card?.summary || app.description));
+      r.append(Apps.icon(app.icon, app.color, "m-icon"), t);
+      if (st === "warning" || st === "critical") r.append(h("span", "m-pill", `${STATUS_ICON[st]} ${Apps.STATUS_TEXT[st]}`));
+      r.append(chevron());
+      r.addEventListener("click", () => openDetail(app));
+      return r;
+    }
+
+    function openDetail(app) {
+      const view = app.view && Apps.views[app.view];
+      if (view) {
+        // 自訂畫面(例如 System 儀表板)
+        const el = h("div", "m-view");
+        const content = h("div", "m-view-content");
+        el.appendChild(content);
+        const stop = view.mount(content, { device: "mobile" });
+        push("overview", { title: app.title, el, destroy: () => typeof stop === "function" && stop() });
+        return;
+      }
+      push("overview", cardPage(app.name, app.title));
+    }
+
+    return {
+      title: "總覽",
+      el,
+      onShow() {
+        clearInterval(timer);
+        refresh();
+        timer = setInterval(() => {
+          if (!document.hidden && tab === "overview" && stacks.overview.length === 1) refresh();
+        }, 3000);
+      },
+    };
+  }
+
+  // 一個 plugin 的細節頁: 狀態卡片的內容(按鈕、開關…), 定時更新
+  function cardPage(name, title) {
+    const el = h("div", "m-detail");
+    const head = h("div", "m-detail-head");
+    const body = h("div", "cw-root m-cw m-detail-body");
+    el.append(head, body);
+    let busy = false;
+    let timer = null;
+
+    async function refresh() {
+      if (busy) return;
+      try {
+        await Apps.load();
+        setLive(true);
+      } catch {
+        setLive(false);
+        return;
+      }
+      const app = Apps.find(name);
+      if (!app || !app.card) {
+        body.replaceChildren(h("div", "m-empty", "沒有資料"));
+        return;
+      }
+      head.replaceChildren(Apps.icon(app.icon, app.color, "m-icon lg"));
+      const text = h("div", "m-detail-text");
+      text.append(h("div", "m-detail-title", app.title), h("div", "m-detail-sub", app.card.summary || app.description));
+      head.appendChild(text);
+      const st = app.card.status;
+      if (st && st !== "good") head.appendChild(h("span", "m-pill", `${STATUS_ICON[st]} ${Apps.STATUS_TEXT[st]}`));
+      head.dataset.status = st || "";
+      Apps.renderWidgets(body, app.card, {
+        onAction: async (p) => {
+          busy = true;
+          const r = await p;
+          busy = false;
+          if (r.text) toast(r.text, r.ok);
+          refresh();
+        },
+      });
+    }
+
+    refresh();
+    timer = setInterval(() => {
+      if (!document.hidden && top("overview")?.el === el) refresh();
+    }, 3000);
+    return { title, el, destroy: () => clearInterval(timer) };
+  }
+
+  // ====================================================================
+  // 指令
+  // ====================================================================
+  function cliPage() {
+    const el = h("div", "m-cli");
+    el.innerHTML = `
+      <div class="m-seg" role="tablist">
+        <button data-v="menu" class="on">選單</button>
+        <button data-v="out">輸出<span class="m-badge" hidden></span></button>
+      </div>
+      <div class="m-cli-menu">
+        <div class="m-crumb"></div>
+        <div class="m-recent"></div>
+        <div class="m-list m-cands"></div>
+      </div>
+      <div class="m-cli-out" hidden></div>
+      <form class="m-composer" autocomplete="off">
+        <span class="m-prompt"></span>
+        <input class="m-input" enterkeyhint="go" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="點選上面的指令, 或直接輸入">
+        <button type="button" class="m-clear" aria-label="清除" hidden>×</button>
+        <button type="submit" class="m-run">執行</button>
+      </form>`;
+    const menu = $(".m-cli-menu", el);
+    const out = $(".m-cli-out", el);
+    const crumb = $(".m-crumb", el);
+    const recent = $(".m-recent", el);
+    const cands = $(".m-cands", el);
+    const input = $(".m-input", el);
+    const clearBtn = $(".m-clear", el);
+    const runBtn = $(".m-run", el);
+    const badge = $(".m-badge", el);
+    const promptEl = $(".m-prompt", el);
+    let view = "menu";
+    let unread = 0;
+
+    function setView(v) {
+      view = v;
+      el.querySelectorAll(".m-seg button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+      menu.hidden = v !== "menu";
+      out.hidden = v !== "out";
+      if (v === "out") {
+        unread = 0;
+        badge.hidden = true;
+        out.scrollTop = out.scrollHeight;
+      }
+    }
+    el.querySelectorAll(".m-seg button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.v)));
+
+    // ---- 目前層次 ----
+    function renderCrumb() {
+      promptEl.textContent = Shell.prompt();
+      crumb.replaceChildren();
+      const path = Shell.path;
+      const home = h("button", "m-crumb-item", "最上層");
+      home.addEventListener("click", () => Shell.exec("/", { history: false }).then(refreshCands));
+      crumb.appendChild(home);
+      path.forEach((p, i) => {
+        crumb.append(h("span", "m-crumb-sep", "›"));
+        const b = h("button", "m-crumb-item", p);
+        b.addEventListener("click", () => Shell.exec(`/${path.slice(0, i + 1).join(" ")}`, { history: false }).then(refreshCands));
+        crumb.appendChild(b);
+      });
+    }
+
+    // ---- 最近使用 ----
+    function renderRecent() {
+      recent.replaceChildren();
+      const seen = new Set();
+      const items = [];
+      for (let i = Shell.history.length - 1; i >= 0 && items.length < 8; i--) {
+        const l = Shell.history[i].trim();
+        if (l && !seen.has(l)) {
+          seen.add(l);
+          items.push(l);
+        }
+      }
+      if (!items.length) return;
+      recent.appendChild(h("div", "m-section-title", "最近使用"));
+      const row = h("div", "m-chips");
+      for (const l of items) {
+        const c = h("button", "m-chip", l);
+        c.addEventListener("click", () => run(l));
+        row.appendChild(c);
+      }
+      recent.appendChild(row);
+    }
+
+    // ---- 候選(點選式組指令) ----
+    let candSeq = 0;
+    async function refreshCands() {
+      const seq = ++candSeq;
+      const text = input.value;
+      const list = await Shell.candidates(text);
+      if (seq !== candSeq) return;
+      const current = text.endsWith(" ") || !text ? "" : text.split(/\s+/).pop();
+      const head = text.slice(0, text.length - current.length);
+      cands.replaceChildren();
+      recent.hidden = !!text;
+      clearBtn.hidden = !text;
+      runBtn.classList.toggle("ready", !!text.trim() && !list.some((c) => c.placeholder || c.more) ? true : false);
+      if (!list.length) {
+        cands.appendChild(h("div", "m-empty", text.trim() ? "沒有其他選項, 按「執行」" : "沒有可用的指令"));
+        return;
+      }
+      if (text) cands.appendChild(h("div", "m-section-title", "接下來可以選"));
+      for (const c of list) {
+        const row = h("button", `m-row ${c.placeholder ? "param" : ""}`);
+        const t = h("div", "m-row-text");
+        t.append(h("div", "m-row-name", c.name), h("div", "m-row-desc", c.desc || ""));
+        row.appendChild(t);
+        if (c.placeholder) row.appendChild(h("span", "m-tag", "輸入"));
+        else if (c.more) row.appendChild(chevron());
+        row.addEventListener("click", () => {
+          if (c.placeholder) {
+            // 參數: 叫出鍵盤讓使用者輸入
+            input.value = head;
+            input.placeholder = `輸入 ${c.name}`;
+            input.focus();
+            refreshCands();
+            return;
+          }
+          input.value = `${head}${c.name} `;
+          refreshCands();
+        });
+        cands.appendChild(row);
+      }
+    }
+
+    let candTimer = null;
+    input.addEventListener("input", () => {
+      clearTimeout(candTimer);
+      candTimer = setTimeout(refreshCands, 150);
+    });
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      input.placeholder = "點選上面的指令, 或直接輸入";
+      refreshCands();
+    });
+
+    // ---- 執行 ----
+    async function run(line) {
+      if (!line.trim()) return;
+      input.value = "";
+      input.placeholder = "點選上面的指令, 或直接輸入";
+      input.blur();
+      setView("out");
+      await Shell.exec(line.trim());
+      renderRecent();
+      refreshCands();
+    }
+    $(".m-composer", el).addEventListener("submit", (e) => {
+      e.preventDefault();
+      run(input.value);
+    });
+
+    // ---- 輸出: 每個指令一張卡片 ----
+    function renderOut() {
+      out.replaceChildren();
+      let group = null;
+      for (const m of Shell.messages) {
+        if (m.level === "command" || !group) {
+          group = h("div", "m-out-group");
+          out.appendChild(group);
+        }
+        const line = h("div", `m-out-line lv-${m.level}`);
+        if (m.level === "warn" || m.level === "error") line.appendChild(h("span", "m-out-icon", m.level === "warn" ? "▲" : "●"));
+        line.appendChild(document.createTextNode(m.text));
+        group.appendChild(line);
+      }
+      if (!Shell.messages.length) out.appendChild(h("div", "m-empty", "還沒有執行任何指令"));
+      else {
+        const clr = h("button", "m-out-clear", "清除輸出");
+        clr.addEventListener("click", () => Shell.clearMessages());
+        out.appendChild(clr);
+      }
+      out.scrollTop = out.scrollHeight;
+    }
+    Shell.on("message", () => {
+      renderOut();
+      if (view !== "out") {
+        unread++;
+        badge.textContent = unread > 99 ? "99+" : String(unread);
+        badge.hidden = false;
+      }
+    });
+    Shell.on("clear", renderOut);
+    Shell.on("path", () => {
+      renderCrumb();
+      refreshCands();
+    });
+
+    renderCrumb();
+    renderRecent();
+    renderOut();
+    let started = false;
+
+    // 輸入時隱藏底部分頁, 留空間給鍵盤
+    input.addEventListener("focus", () => document.body.classList.add("typing"));
+    input.addEventListener("blur", () => setTimeout(() => document.body.classList.remove("typing"), 100));
+
+    return {
+      title: "指令",
+      el,
+      onShow() {
+        if (!started) {
+          started = true;
+          Shell.sync().then(refreshCands);
+        }
+      },
+    };
+  }
+
+  // ====================================================================
+  // 設定
+  // ====================================================================
+  const groupOf = (key) => key.split(".")[0];
+  function kindOf(row) {
+    if (row.key.endsWith(".rect")) return "rect";
+    if (row.default === "true" || row.default === "false") return "bool";
+    if (/^\d+(\.\d+)?$/.test(row.default)) return "number";
+    return "text";
+  }
+  function splitDesc(desc) {
+    const m = desc.match(/^(.*?)(?:[,，]\s*|\s+)?\(([^()]*)\)\s*$/);
+    return m ? [m[1], m[2]] : [desc, ""];
+  }
+  function metaOf(g) {
+    const a = Apps.find(g);
+    return a ? { title: a.title, icon: a.icon, color: a.color } : { title: g, icon: "other", color: "gray" };
+  }
+
+  let rows = [];
+  const rowListeners = new Set();
+  async function loadRows() {
+    try {
+      const res = await Apps.api("settings", "");
+      const changed = JSON.stringify(res.settings) !== JSON.stringify(rows);
+      rows = res.settings;
+      if (changed) rowListeners.forEach((f) => f());
+    } catch {
+      /* 下次再試 */
+    }
+  }
+  /** 執行 settings 指令, 成功回傳 null, 失敗回傳錯誤訊息 */
+  async function runSetting(line) {
+    const r = await Apps.exec(line);
+    await loadRows();
+    return r.ok ? null : r.text.replace(/^settings:\s*/, "");
+  }
+
+  function settingsPage() {
+    const el = h("div", "m-settings");
+    const render = () => {
+      el.replaceChildren();
+      // 這個瀏覽器
+      el.appendChild(h("div", "m-section-title", "這個瀏覽器"));
+      const local = h("div", "m-list");
+      local.appendChild(navRow(Apps.icon("appearance", "indigo", "m-icon sm"), "外觀", themeName(), () => push("settings", appearancePage())));
+      el.appendChild(local);
+      // 系統設定(各 plugin 的分組)
+      el.appendChild(h("div", "m-section-title", "系統設定"));
+      const sys = h("div", "m-list");
+      const order = Apps.list.map((a) => a.name);
+      const groups = [...new Set(rows.map((r) => groupOf(r.key)))].sort(
+        (a, b) => ((order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)) || a.localeCompare(b),
+      );
+      for (const g of groups) {
+        const m = metaOf(g);
+        const changed = rows.filter((r) => groupOf(r.key) === g && r.value !== r.default).length;
+        sys.appendChild(navRow(Apps.icon(m.icon, m.color, "m-icon sm"), m.title, changed ? `已修改 ${changed}` : "", () => push("settings", groupPage(g))));
+      }
+      if (!groups.length) sys.appendChild(h("div", "m-empty", "讀取中…"));
+      el.appendChild(sys);
+      el.appendChild(h("div", "m-foot", "系統設定會寫入 Pi 上的 settings.conf"));
+    };
+    rowListeners.add(render);
+    let timer = null;
+    return {
+      title: "設定",
+      el,
+      onShow() {
+        Promise.all([Apps.load().catch(() => {}), loadRows()]).then(render);
+        render();
+        clearInterval(timer);
+        timer = setInterval(() => !document.hidden && tab === "settings" && loadRows(), 4000);
+      },
+    };
+  }
+
+  function navRow(icon, title, value, onClick) {
+    const r = h("button", "m-row nav");
+    if (icon) r.appendChild(icon);
+    const t = h("div", "m-row-text");
+    t.appendChild(h("div", "m-row-name ui", title));
+    r.append(t);
+    if (value) r.appendChild(h("span", "m-row-value", value));
+    r.appendChild(chevron());
+    r.addEventListener("click", onClick);
+    return r;
+  }
+
+  // ---- 外觀 ----
+  const THEMES = [
+    ["system", "系統", "跟著手機的淺色/深色設定"],
+    ["light", "淺色", ""],
+    ["dark", "深色", ""],
+  ];
+  function getTheme() {
+    try {
+      const t = localStorage.getItem("cng6.theme");
+      return t === "light" || t === "dark" ? t : "system";
+    } catch {
+      return "system";
+    }
+  }
+  function setTheme(t) {
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+    try {
+      if (t === "system") localStorage.removeItem("cng6.theme");
+      else localStorage.setItem("cng6.theme", t);
+    } catch {
+      /* 略過 */
+    }
+    window.dispatchEvent(new CustomEvent("cng6-theme", { detail: t }));
+  }
+  const themeName = () => THEMES.find((t) => t[0] === getTheme())[1];
+
+  function appearancePage() {
+    const el = h("div", "m-settings");
+    const render = () => {
+      el.replaceChildren();
+      const list = h("div", "m-list");
+      for (const [id, name, note] of THEMES) {
+        const r = h("button", "m-row check");
+        r.setAttribute("role", "radio");
+        r.setAttribute("aria-checked", String(getTheme() === id));
+        const t = h("div", "m-row-text");
+        t.append(h("div", "m-row-name ui", name));
+        if (note) t.append(h("div", "m-row-desc", note));
+        r.append(t, h("span", "m-check", getTheme() === id ? "✓" : ""));
+        r.addEventListener("click", () => {
+          setTheme(id);
+          render();
+        });
+        list.appendChild(r);
+      }
+      el.append(list, h("div", "m-foot", "只套用在這個瀏覽器"));
+    };
+    render();
+    return { title: "外觀", el };
+  }
+
+  // ---- 一個分組的設定 ----
+  function groupPage(g) {
+    const el = h("div", "m-settings");
+    let editingWp = false;
+    const render = () => {
+      // 正在輸入時不要重畫
+      if (el.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+      el.replaceChildren();
+      if (g === "wallpaper") el.appendChild(wallpaperSection());
+      const list = rows.filter((r) => groupOf(r.key) === g && !(g === "wallpaper" && r.key === "wallpaper.current"));
+      el.appendChild(h("div", "m-section-title", "設定"));
+      const box = h("div", "m-list");
+      for (const row of list) box.appendChild(settingRow(row));
+      el.appendChild(box);
+      const modified = list.filter((r) => r.value !== r.default);
+      if (modified.length) {
+        const all = h("button", "m-link", `全部恢復預設 (${modified.length})`);
+        all.addEventListener("click", async () => {
+          if (!confirm(`把 ${metaOf(g).title} 的 ${modified.length} 項設定恢復預設?`)) return;
+          for (const r of modified) await runSetting(`/settings reset ${r.key}`);
+          toast("已恢復預設");
+        });
+        el.appendChild(all);
+      }
+    };
+
+    // 桌布: 縮圖 + 從相簿上傳 + 編輯(刪除)
+    function wallpaperSection() {
+      const s = h("div", "m-wp");
+      const headRow = h("div", "m-section-head");
+      headRow.appendChild(h("div", "m-section-title", "桌布"));
+      const edit = h("button", "m-link sm", editingWp ? "完成" : "編輯");
+      edit.addEventListener("click", () => {
+        editingWp = !editingWp;
+        render();
+      });
+      headRow.appendChild(edit);
+      s.appendChild(headRow);
+      const grid = h("div", "m-wp-grid");
+      s.appendChild(grid);
+      const up = h("label", "m-btn");
+      up.textContent = "從相簿上傳…";
+      const file = h("input");
+      file.type = "file";
+      file.accept = "image/*";
+      file.multiple = true;
+      file.hidden = true;
+      file.addEventListener("change", async () => {
+        const files = [...file.files].filter((f) => /\.(jpe?g|png|webp|gif|avif)$/i.test(f.name));
+        file.value = "";
+        if (!files.length) return toast("只接受 jpg / png / webp / gif / avif", false);
+        toast(`上傳中… (${files.length} 張)`);
+        let ok = 0;
+        for (const f of files) {
+          const r = await fetch(`/api/wallpaper/${encodeURIComponent(f.name)}`, { method: "PUT", body: f }).catch(() => null);
+          if (r && r.ok) ok++;
+        }
+        toast(ok === files.length ? `已上傳 ${ok} 張` : `上傳 ${ok}/${files.length} 張, 有些失敗`, ok === files.length);
+        render();
+      });
+      up.appendChild(file);
+      s.appendChild(up);
+      s.appendChild(h("div", "m-foot", "iPhone 相簿的 HEIC 照片請先轉成 JPEG(分享時選「最相容」)"));
+
+      fetch("/api/wallpaper", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((info) => {
+          const tile = (name, label, url) => {
+            const t = h("button", `m-wp-tile ${info.showing === name ? "on" : ""}`);
+            const th = h("span", `m-wp-thumb ${url ? "" : "default"}`);
+            if (url) {
+              const img = h("img");
+              img.loading = "lazy";
+              img.alt = "";
+              img.src = url;
+              th.appendChild(img);
+            }
+            t.append(th, h("span", "m-wp-name", label));
+            if (editingWp && url) {
+              t.appendChild(h("span", "m-wp-del", "−"));
+              t.addEventListener("click", async () => {
+                if (!confirm(`刪除桌布「${name}」?`)) return;
+                const r = await fetch(`/api/wallpaper/${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => null);
+                if (!r || !r.ok) return toast("刪除失敗", false);
+                if (info.showing === name) await runSetting("/wallpaper set default");
+                toast(`已刪除 ${name}`);
+                render();
+              });
+            } else {
+              t.addEventListener("click", async () => {
+                if (info.showing === name) return;
+                const err = await runSetting(`/wallpaper set ${quoteArg(name)}`);
+                toast(err || `桌布已換成 ${label}`, !err);
+                render();
+              });
+            }
+            return t;
+          };
+          grid.appendChild(tile("default", "預設", null));
+          for (const it of info.list) grid.appendChild(tile(it.name, it.name, it.url));
+        })
+        .catch(() => grid.appendChild(h("div", "m-empty", "無法讀取桌布")));
+      return s;
+    }
+
+    rowListeners.add(render);
+    render();
+    return { title: metaOf(g).title, el, destroy: () => rowListeners.delete(render) };
+  }
+
+  function settingRow(row) {
+    const kind = kindOf(row);
+    const r = h("div", `m-row setting ${kind}`);
+    const [title, hint] = splitDesc(row.desc);
+    const t = h("div", "m-row-text");
+    const name = h("div", "m-row-name ui", title);
+    if (row.value !== row.default) name.appendChild(h("span", "m-dot"));
+    const sub = h("div", "m-row-desc");
+    sub.append(h("code", null, row.key));
+    if (hint) sub.append(document.createTextNode(` · ${hint}`));
+    const err = h("div", "m-err");
+    err.hidden = true;
+    t.append(name, sub, err);
+    r.appendChild(t);
+
+    async function apply(value) {
+      if (value === row.value) return;
+      const e = await runSetting(`/settings set ${row.key} ${quoteArg(value)}`);
+      if (e) {
+        toast(e, false);
+        err.textContent = e;
+        err.hidden = false;
+      } else toast(`已儲存 ${row.key}`);
+    }
+
+    const ctl = h("div", "m-ctl");
+    if (kind === "bool") {
+      const sw = h("label", "m-switch");
+      const box = h("input");
+      box.type = "checkbox";
+      box.checked = row.value === "true";
+      box.setAttribute("aria-label", title);
+      box.addEventListener("change", () => apply(box.checked ? "true" : "false"));
+      sw.append(box, h("span", "m-track"));
+      ctl.appendChild(sw);
+    } else if (kind === "rect") {
+      const vals = row.value.split(/\s+/);
+      const fields = ["x1", "y1", "x2", "y2"].map((n, i) => {
+        const f = h("label", "m-rect-f");
+        const inp = h("input", "m-input-sm");
+        inp.inputMode = "numeric";
+        inp.value = vals[i] ?? "";
+        inp.setAttribute("aria-label", n);
+        f.append(h("span", null, n), inp);
+        ctl.appendChild(f);
+        return inp;
+      });
+      const commit = () =>
+        setTimeout(() => {
+          if (!fields.includes(document.activeElement)) apply(fields.map((f) => f.value.trim()).join(" "));
+        }, 0);
+      fields.forEach((f) => f.addEventListener("change", commit));
+    } else {
+      const inp = h("input", `m-input-sm ${kind}`);
+      inp.value = row.value;
+      inp.inputMode = kind === "number" ? "decimal" : "text";
+      inp.enterKeyHint = "done";
+      inp.spellcheck = false;
+      inp.setAttribute("aria-label", title);
+      inp.addEventListener("change", () => apply(inp.value.trim()));
+      inp.addEventListener("keydown", (e) => e.key === "Enter" && inp.blur());
+      ctl.appendChild(inp);
+    }
+    if (row.value !== row.default) {
+      const rb = h("button", "m-reset", "↺");
+      rb.title = `恢復預設 (${row.default})`;
+      rb.setAttribute("aria-label", rb.title);
+      rb.addEventListener("click", async () => {
+        const e = await runSetting(`/settings reset ${row.key}`);
+        toast(e || `${row.key} 已恢復預設`, !e);
+      });
+      ctl.prepend(rb);
+    }
+    r.appendChild(ctl);
+    return r;
+  }
+
+  // ---------------------------------------------------------- 啟動
+  push("overview", overviewPage());
+  push("cli", cliPage());
+  push("settings", settingsPage());
+  tab = "overview";
+  show();
+  // 從背景回來時馬上更新
+  document.addEventListener("visibilitychange", () => !document.hidden && top().onShow && top().onShow());
+})();

@@ -62,6 +62,12 @@ pub fn detect_device(query: Option<&str>, ch_mobile: Option<&str>, user_agent: &
 const DESKTOP_HTML: &str = include_str!("assets/desktop.html");
 const DESKTOP_CSS: &str = include_str!("assets/desktop.css");
 const DESKTOP_JS: &str = include_str!("assets/desktop.js");
+const APPS_CSS: &str = include_str!("assets/apps.css");
+const APPS_JS: &str = include_str!("assets/apps.js");
+/// 手機版
+const MOBILE_HTML: &str = include_str!("assets/mobile.html");
+const MOBILE_CSS: &str = include_str!("assets/mobile.css");
+const MOBILE_JS: &str = include_str!("assets/mobile.js");
 const SYSTEM_CSS: &str = include_str!("assets/system.css");
 const SYSTEM_JS: &str = include_str!("assets/system.js");
 const SHELL_CSS: &str = include_str!("assets/shell.css");
@@ -74,6 +80,8 @@ pub fn render_page(device: Device) -> String {
     match device {
         Device::Pc => DESKTOP_HTML
             .replacen("/*CSS*/", DESKTOP_CSS, 1)
+            .replacen("/*APPSCSS*/", APPS_CSS, 1)
+            .replacen("/*APPSJS*/", APPS_JS, 1)
             .replacen("/*SYSCSS*/", SYSTEM_CSS, 1)
             .replacen("/*SYSJS*/", SYSTEM_JS, 1)
             .replacen("/*SHELLCSS*/", SHELL_CSS, 1)
@@ -81,17 +89,15 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*SETCSS*/", SETTINGS_CSS, 1)
             .replacen("/*SETJS*/", SETTINGS_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
-        // mobile 版目前還是空白頁
-        Device::Mobile => "<!doctype html>\n\
-             <html lang=\"zh-Hant\" data-device=\"mobile\">\n\
-             <head>\n\
-             <meta charset=\"utf-8\">\n\
-             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-             <title>cng6</title>\n\
-             </head>\n\
-             <body class=\"mobile\"></body>\n\
-             </html>\n"
-            .to_string(),
+        // 手機: 底部分頁(總覽 / 指令 / 設定), 共用 apps / shell / system 的程式
+        Device::Mobile => MOBILE_HTML
+            .replacen("/*APPSCSS*/", APPS_CSS, 1)
+            .replacen("/*SYSCSS*/", SYSTEM_CSS, 1)
+            .replacen("/*MOBILECSS*/", MOBILE_CSS, 1)
+            .replacen("/*APPSJS*/", APPS_JS, 1)
+            .replacen("/*SYSJS*/", SYSTEM_JS, 1)
+            .replacen("/*SHELLJS*/", SHELL_JS, 1)
+            .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
     }
 }
 

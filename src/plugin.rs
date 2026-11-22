@@ -9,6 +9,8 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 
+use crate::webui::{Card, WebMeta};
+
 /// 訊息等級
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -108,6 +110,8 @@ pub enum Action {
     Describe(String),
     /// 結束程式
     Quit,
+    /// 重新啟動程式(載入新編譯的版本)
+    Restart,
 }
 
 /// 系統廣播給 plugin 的事件
@@ -244,6 +248,23 @@ pub trait Plugin {
 
     /// 繪製 panel, `focused` 表示目前是否有 focus
     fn render(&mut self, frame: &mut Frame, area: Rect, focused: bool);
+
+    // ---- 網頁(PC 桌面與手機), 見 `webui` ----
+
+    /// 網頁上的名稱、圖示與顏色; None 時用 plugin 名稱與通用圖示
+    fn web_meta(&self) -> Option<WebMeta> {
+        None
+    }
+
+    /// 狀態卡片(由前端通用程式繪製); 有卡片的 plugin 會出現在 Dock 與手機總覽
+    fn web_card(&self) -> Option<Card> {
+        None
+    }
+
+    /// 自訂畫面的前端模組名稱(例如 "system"), 前端要有對應的 view
+    fn web_view(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// 從 help 表推導下一個字的候選。

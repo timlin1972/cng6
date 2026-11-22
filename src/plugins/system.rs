@@ -10,6 +10,7 @@ use ratatui::widgets::Paragraph;
 use sysinfo::{Components, Disks, System};
 
 use crate::plugin::{Ctx, PanelRect, Plugin, panel_block};
+use crate::webui::{Card, Status, WebMeta};
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 const BAR_WIDTH: usize = 20;
@@ -235,6 +236,79 @@ impl Plugin for SystemInfo {
         if self.last_refresh.elapsed() >= self.interval {
             self.refresh();
         }
+    }
+
+    fn web_meta(&self) -> Option<WebMeta> {
+        Some(WebMeta::new("System", "system", "green"))
+    }
+
+    fn web_view(&self) -> Option<&str> {
+        Some("system")
+    }
+
+    fn web_card(&self) -> Option<Card> {
+        let cpu = self.sys.global_cpu_usage() as f64;
+        let (mu, mt) = (self.sys.used_memory(), self.sys.total_memory());
+        let mem = pct(mu, mt);
+        let temp = self
+            .components
+            .iter()
+            .filter_map(|c| c.temperature())
+            .fold(None, |m: Option<f32>, t| Some(m.map_or(t, |m| m.max(t))));
+        let root = self
+            .disks
+            .iter()
+            .find(|d| d.mount_point() == std::path::Path::new("/"))
+            .or_else(|| self.disks.iter().find(|d| d.total_space() > 0));
+
+        let mut card = Card::new().stat(
+            "CPU",
+            format!("{cpu:.0}"),
+            Some("%"),
+            Some(Status::by(cpu, 75.0, 90.0)),
+        );
+        card = card.hint(format!("{} 核心", self.sys.cpus().len()));
+        card = card.stat(
+            "記憶體",
+            format!("{mem:.0}"),
+            Some("%"),
+            Some(Status::by(mem, 80.0, 90.0)),
+        );
+        card = card.hint(format!(
+            "{:.1} / {:.1} GiB",
+            mu as f64 / GIB,
+            mt as f64 / GIB
+        ));
+        let mut worst = Status::by(cpu, 75.0, 90.0).max(Status::by(mem, 80.0, 90.0));
+        if let Some(t) = temp {
+            let st = Status::by(t as f64, 65.0, 80.0);
+            worst = worst.max(st);
+            card = card.stat("溫度", format!("{t:.1}"), Some("°C"), Some(st));
+        }
+        if let Some(d) = root {
+            let used = d.total_space() - d.available_space();
+            let p = pct(used, d.total_space());
+            let st = Status::by(p, 85.0, 95.0);
+            worst = worst.max(st);
+            card = card.meter(
+                format!("磁碟 {}", d.mount_point().display()),
+                p / 100.0,
+                format!(
+                    "{:.0} / {:.0} GiB · {p:.0}%",
+                    used as f64 / GIB,
+                    d.total_space() as f64 / GIB
+                ),
+                Some(st),
+            );
+        }
+        let load = System::load_average();
+        Some(card.status(worst).summary(format!(
+            "負載 {:.2} {:.2} {:.2} · 開機 {}",
+            load.one,
+            load.five,
+            load.fifteen,
+            fmt_uptime(System::uptime())
+        )))
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, focused: bool) {

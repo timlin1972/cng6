@@ -856,3 +856,6 @@ const SystemApp = (() => {
 
   return { mount };
 })();
+
+// 註冊為 system plugin 的自訂畫面
+Apps.registerView("system", SystemApp);

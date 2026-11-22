@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use tokio::sync::oneshot;
 
 use crate::plugin::{Level, SettingRow};
+use crate::webui::AppInfo;
 
 /// 請求種類, 對應 TUI 的 Enter / Tab / `?`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,10 @@ pub enum Op {
     Describe,
     /// 取得所有設定(網頁 Settings 視窗)
     Settings,
+    /// 取得所有 plugin 的網頁描述與狀態卡片
+    Apps,
+    /// 游標前的文字之後可以接哪些字(手機的點選式指令)
+    Candidates,
 }
 
 pub struct Request {
@@ -39,6 +44,21 @@ pub struct Reply {
     pub replacement: Option<String>,
     /// Op::Settings 的結果
     pub settings: Option<Vec<SettingRow>>,
+    /// Op::Apps 的結果
+    pub apps: Option<Vec<AppInfo>>,
+    /// Op::Candidates 的結果
+    pub candidates: Option<Vec<Candidate>>,
+}
+
+/// 指令候選
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Candidate {
+    pub name: String,
+    pub desc: String,
+    /// 選了之後還有下一層
+    pub more: bool,
+    /// 參數佔位, 例如 `<value>`, 要使用者輸入
+    pub placeholder: bool,
 }
 
 pub type Sender = mpsc::Sender<Request>;

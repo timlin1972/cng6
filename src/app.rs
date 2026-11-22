@@ -27,8 +27,9 @@ use crate::plugins::{
     wallpaper::{self, Wallpaper},
     web::Web,
 };
-use crate::remote::{self, Op, Reply, Request};
+use crate::remote::{self, Candidate, Op, Reply, Request};
 use crate::settings::Settings;
+use crate::webui::{AppInfo, WebMeta};
 
 const CLI: &str = "cli";
 /// 系統設定檔
@@ -54,6 +55,7 @@ const GLOBAL_HELP: &[(&str, &str)] = &[
     ("/", "回最上層"),
     ("/<cmd>", "從最上層執行指令, 例如 /panel list"),
     ("quit | q", "離開程式 (Ctrl-C 亦可)"),
+    ("restart", "重新啟動 cng6, 載入新編譯的版本"),
     ("echo <text>", "輸出文字"),
     ("source <file>", "執行 script 檔"),
 ];
@@ -85,6 +87,7 @@ const GLOBAL_CMDS: &[(&str, &str)] = &[
     ("..", "回上一層"),
     ("exit", "回上一層, 在最上層時離開程式"),
     ("quit", "離開程式"),
+    ("restart", "重新啟動 cng6, 載入新編譯的版本"),
     ("echo", "輸出文字"),
     ("source", "執行 script 檔"),
 ];
@@ -127,6 +130,8 @@ pub struct App {
     /// CLI 目前所在的層次, 空的表示最上層
     path: Vec<String>,
     running: bool,
+    /// restart 指令: 結束後重新啟動
+    restart: bool,
     /// 網頁 CLI 送來的請求
     remote_rx: remote::Receiver,
     /// 每個遠端連線所在的層次
@@ -148,6 +153,7 @@ impl App {
             settings: Settings::new(SETTINGS_FILE),
             path: Vec::new(),
             running: true,
+            restart: false,
             remote_rx,
             sessions: HashMap::new(),
             capture: None,
@@ -174,6 +180,11 @@ impl App {
 
     pub fn running(&self) -> bool {
         self.running
+    }
+
+    /// 結束時是否要重新啟動(restart 指令)
+    pub fn restart_requested(&self) -> bool {
+        self.restart
     }
 
     fn find(&self, name: &str) -> Option<usize> {
@@ -360,6 +371,7 @@ impl App {
             ));
         }
 
+        let query = req.line.clone();
         // 換成這個連線的層次執行, 結束後換回 TUI 的層次
         let tui_path = std::mem::replace(&mut self.path, session_path);
         self.capture = Some(Reply::default());
@@ -369,16 +381,21 @@ impl App {
             Op::Exec => Some(Action::Execute(req.line)),
             Op::Complete => Some(Action::Complete(req.line)),
             Op::Describe => Some(Action::Describe(req.line)),
-            // 不執行指令, 下面直接附上設定
-            Op::Settings => None,
+            // 不執行指令, 下面直接附上結果
+            Op::Settings | Op::Apps | Op::Candidates => None,
         };
         if let Some(action) = action {
             self.process(vec![action]);
         }
+        // 候選要在這個連線的層次下計算(網頁不列出 TUI 專用指令)
+        let candidates = (req.op == Op::Candidates).then(|| self.web_candidates(&query));
         let mut reply = self.capture.take().unwrap_or_default();
+        reply.candidates = candidates;
         reply.path = std::mem::replace(&mut self.path, tui_path);
-        if req.op == Op::Settings {
-            reply.settings = Some(self.setting_rows());
+        match req.op {
+            Op::Settings => reply.settings = Some(self.setting_rows()),
+            Op::Apps => reply.apps = Some(self.web_apps()),
+            _ => {}
         }
 
         if self.sessions.len() >= MAX_SESSIONS && !self.sessions.contains_key(&req.session) {
@@ -459,6 +476,10 @@ impl App {
                     requeue(&mut queue, ctx);
                 }
                 Action::Quit => self.running = false,
+                Action::Restart => {
+                    self.restart = true;
+                    self.running = false;
+                }
             }
         }
     }
@@ -512,7 +533,7 @@ impl App {
                 c
             }
             Some((&"echo", _)) => vec![("<text>".into(), "要輸出的文字".into())],
-            Some((&("quit" | "q" | "exit" | ".." | "source"), _)) => Vec::new(),
+            Some((&("quit" | "q" | "exit" | ".." | "source" | "restart"), _)) => Vec::new(),
             Some(_) => {
                 full.extend_from_slice(&words);
                 self.children(&full)
@@ -663,6 +684,10 @@ impl App {
                 self.cmd_help(&full, ctx);
             }
             "quit" | "q" => ctx.quit(),
+            "restart" => {
+                ctx.warn("重新啟動中…");
+                ctx.push(Action::Restart);
+            }
             ".." | "exit" => {
                 if !self.path.is_empty() {
                     let mut p = self.path.clone();
@@ -1097,6 +1122,54 @@ impl App {
     fn broadcast_settings(&mut self) {
         let rows = self.setting_rows();
         self.broadcast(&Event::SettingsChanged(rows));
+    }
+
+    /// 游標前的文字之後可以接的字, 並標出選了之後還有沒有下一層
+    fn web_candidates(&self, before: &str) -> Vec<Candidate> {
+        let (current, list) = self.candidates(before);
+        let head = &before[..before.len() - current.len()];
+        list.into_iter()
+            .map(|(name, desc)| {
+                let placeholder = is_placeholder(&name);
+                let more = !placeholder
+                    && !matches!(name.as_str(), ".." | "exit" | "quit" | "q")
+                    && !self.candidates(&format!("{head}{name} ")).1.is_empty();
+                Candidate {
+                    name,
+                    desc,
+                    more,
+                    placeholder,
+                }
+            })
+            .collect()
+    }
+
+    /// 所有 plugin 給網頁的描述與狀態卡片(依註冊順序)
+    fn web_apps(&self) -> Vec<AppInfo> {
+        let mut apps: Vec<AppInfo> = self
+            .plugins
+            .iter()
+            .map(|p| AppInfo {
+                name: p.name().to_string(),
+                description: p.description().to_string(),
+                meta: p
+                    .web_meta()
+                    .unwrap_or_else(|| WebMeta::new(p.name(), "other", "gray")),
+                has_settings: !p.settings().is_empty(),
+                view: p.web_view().map(str::to_string),
+                card: p.web_card(),
+            })
+            .collect();
+        // panel 位置不屬於任何 plugin, 是 App 自己的設定
+        apps.push(AppInfo {
+            name: "panel".into(),
+            description: "TUI panel 的預設位置".into(),
+            meta: WebMeta::new("Panel 位置", "panel", "orange"),
+            has_settings: true,
+            view: None,
+            card: None,
+        });
+        apps
     }
 
     /// 所有設定的目前值
