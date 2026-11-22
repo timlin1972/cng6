@@ -27,3 +27,6 @@ rustc-ice-*.txt
 # Added by cargo
 
 /target
+
+# cng6 執行時產生的指令歷史
+cli_history.txt

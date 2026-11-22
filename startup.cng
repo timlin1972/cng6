@@ -1,0 +1,6 @@
+# cng6 啟動 script
+# 程式啟動時會逐行執行這裡的指令, 空行與 # 開頭的行會被略過。
+# 也可以用 `cargo run -- <file>` 指定其他 script, 或在 CLI 下 `source <file>`。
+
+panel show message
+panel show system
