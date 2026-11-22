@@ -34,7 +34,8 @@ use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
-use crate::plugins::{music, wallpaper, weather};
+use super::worldclock_api;
+use crate::plugins::{music, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -88,6 +89,7 @@ pub struct Services {
     pub wallpaper: wallpaper::Shared,
     pub music: music::Shared,
     pub weather: weather::Shared,
+    pub worldclock: worldclock::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -174,6 +176,9 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
             shared: state.services.wallpaper.clone(),
             log: state.log.clone(),
         });
+    let worldclock = Router::new()
+        .route("/api/worldclock", get(worldclock_api::info))
+        .with_state(state.services.worldclock.clone());
     let weather = Router::new()
         .route("/api/weather", get(weather_api::info))
         .with_state(state.services.weather.clone());
@@ -194,7 +199,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .merge(cli)
         .merge(wp)
         .merge(music)
-        .merge(weather);
+        .merge(weather)
+        .merge(worldclock);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {

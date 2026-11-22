@@ -127,6 +127,21 @@ const MusicPlayer = (() => {
 
   audio.addEventListener("ended", () => next(true));
   ["play", "pause", "loadedmetadata", "volumechange"].forEach((e) => audio.addEventListener(e, emit));
+  // 鎖定畫面: 播放狀態與進度
+  ["play", "pause"].forEach((e) =>
+    audio.addEventListener(e, () => {
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = audio.paused ? "paused" : "playing";
+    }),
+  );
+  audio.addEventListener("loadedmetadata", () => {
+    try {
+      if (isFinite(audio.duration)) {
+        navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: 1, position: audio.currentTime });
+      }
+    } catch {
+      /* 不支援 */
+    }
+  });
   audio.addEventListener("error", () => {
     // 檔案被刪除或格式不支援: 跳下一首
     if (current()) setTimeout(() => next(true), 800);
@@ -144,19 +159,30 @@ const MusicPlayer = (() => {
       album: t.album || source,
       artwork: art ? [{ src: art, sizes: "512x512" }] : [],
     });
+    setHandlers();
   }
-  if ("mediaSession" in navigator) {
+  // 鎖定畫面的按鈕: 上一首 / 下一首
+  // iOS 預設會顯示 -10 秒 / +10 秒並擋掉上一首/下一首; 把快退/快轉設成 null 才會換成上一首/下一首。
+  // iOS 換歌後有時會忘記, 所以每次換歌都重新設定一次。
+  function setHandlers() {
+    if (!("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
-    ms.setActionHandler("play", () => audio.play());
-    ms.setActionHandler("pause", () => audio.pause());
-    ms.setActionHandler("previoustrack", prev);
-    ms.setActionHandler("nexttrack", () => next());
-    try {
-      ms.setActionHandler("seekto", (d) => (audio.currentTime = d.seekTime));
-    } catch {
-      /* 不支援 */
-    }
+    const set = (action, fn) => {
+      try {
+        ms.setActionHandler(action, fn);
+      } catch {
+        /* 這個瀏覽器不支援這個動作 */
+      }
+    };
+    set("play", () => audio.play());
+    set("pause", () => audio.pause());
+    set("previoustrack", prev);
+    set("nexttrack", () => next());
+    set("seekbackward", null);
+    set("seekforward", null);
+    set("seekto", (d) => (audio.currentTime = d.seekTime));
   }
+  setHandlers();
 
   // ---- 指令 ----
   function quoteArg(a) {

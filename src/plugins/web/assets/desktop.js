@@ -19,7 +19,7 @@ const CORE = {
   },
 };
 // 自訂畫面的預設大小
-const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720] };
+const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720], worldclock: [820, 620] };
 
 let APPS = [];
 
@@ -378,6 +378,7 @@ syncThemeMenu();
 // ---- 桌布: 定時檢查, 換桌布時淡入 ----
 let wpUrl = null;
 let wpFront = 0;
+let wpInfo = null; // 最近一次的桌布資訊(刪除按鈕用)
 async function refreshWallpaper() {
   let info;
   try {
@@ -385,6 +386,7 @@ async function refreshWallpaper() {
   } catch {
     return;
   }
+  wpInfo = info;
   if (info.url === wpUrl) return;
   wpUrl = info.url;
   const layers = document.querySelectorAll("#wallpaper .wp-layer");
@@ -409,6 +411,42 @@ refreshWallpaper();
 setInterval(() => {
   if (!document.hidden) refreshWallpaper();
 }, 5000);
+
+// ---- 桌布右上角的刪除按鈕: 滑鼠停在桌面空白處的右上角時出現 ----
+const wpDel = document.createElement("button");
+wpDel.className = "wp-delete";
+wpDel.title = "刪除這張桌布";
+wpDel.setAttribute("aria-label", "刪除這張桌布");
+wpDel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></svg>`;
+desktop.appendChild(wpDel);
+const WP_HOT = { w: 160, h: 110 }; // 右上角感應範圍
+function wpDeletable() {
+  return wpInfo && wpInfo.url && wpInfo.showing && wpInfo.showing !== "default";
+}
+desktop.addEventListener("pointermove", (e) => {
+  const r = desktop.getBoundingClientRect();
+  const inCorner = e.clientX > r.right - WP_HOT.w && e.clientY < r.top + WP_HOT.h;
+  // 只有在桌面空白處(不是視窗上)才出現
+  const onDesktop = e.target === desktop || e.target === wpDel || wpDel.contains(e.target);
+  wpDel.classList.toggle("show", inCorner && onDesktop && wpDeletable());
+});
+desktop.addEventListener("pointerleave", () => wpDel.classList.remove("show"));
+wpDel.addEventListener("click", async () => {
+  if (!wpDeletable()) return;
+  const name = wpInfo.showing;
+  if (!confirm(`刪除這張桌布?\n\n${name}\n\n檔案會從桌布資料夾移除。`)) return;
+  wpDel.classList.remove("show");
+  // 先換到下一張(沒有其他圖片時換回預設), 再刪除檔案
+  const others = (wpInfo.list || []).filter((w) => w.name !== name);
+  await Apps.exec(others.length ? "/wallpaper next" : "/wallpaper set default");
+  try {
+    const r = await fetch(`/api/wallpaper/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(await r.text());
+  } catch (e) {
+    alert(`刪除失敗: ${e.message}`);
+  }
+  refreshWallpaper();
+});
 
 // ---- 給其他程式用的介面 ----
 window.Desktop = {

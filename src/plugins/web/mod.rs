@@ -11,6 +11,7 @@ pub mod server;
 mod sysmon;
 mod wallpaper_api;
 mod weather_api;
+mod worldclock_api;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};

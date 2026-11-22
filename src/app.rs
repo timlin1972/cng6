@@ -28,6 +28,7 @@ use crate::plugins::{
     wallpaper::{self, Wallpaper},
     weather::{self, Weather},
     web::Web,
+    worldclock::{self, WorldClock},
 };
 use crate::remote::{self, Candidate, Op, Reply, Request};
 use crate::settings::Settings;
@@ -176,12 +177,15 @@ impl App {
         // 天氣: plugin 在背景更新, web 讀取同一份資料
         let weather = weather::Shared::new();
         app.register(Box::new(Weather::new(weather.clone())));
+        let worldclock = worldclock::Shared::new();
+        app.register(Box::new(WorldClock::new(worldclock.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
                 wallpaper,
                 music,
                 weather,
+                worldclock,
             },
         )));
         app

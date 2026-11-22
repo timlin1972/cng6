@@ -74,6 +74,9 @@ const MUSIC_JS: &str = include_str!("assets/music.js");
 /// 天氣(PC 與手機共用)
 const WEATHER_CSS: &str = include_str!("assets/weather.css");
 const WEATHER_JS: &str = include_str!("assets/weather.js");
+/// 世界時間(PC 與手機共用)
+const WC_CSS: &str = include_str!("assets/worldclock.css");
+const WC_JS: &str = include_str!("assets/worldclock.js");
 const SYSTEM_CSS: &str = include_str!("assets/system.css");
 const SYSTEM_JS: &str = include_str!("assets/system.js");
 const SHELL_CSS: &str = include_str!("assets/shell.css");
@@ -98,6 +101,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*MUSICJS*/", MUSIC_JS, 1)
             .replacen("/*WEATHERCSS*/", WEATHER_CSS, 1)
             .replacen("/*WEATHERJS*/", WEATHER_JS, 1)
+            .replacen("/*WCCSS*/", WC_CSS, 1)
+            .replacen("/*WCJS*/", WC_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
         // 手機: 底部分頁(總覽 / 指令 / 設定), 共用 apps / shell / system 的程式
         Device::Mobile => MOBILE_HTML
@@ -111,6 +116,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*MUSICJS*/", MUSIC_JS, 1)
             .replacen("/*WEATHERCSS*/", WEATHER_CSS, 1)
             .replacen("/*WEATHERJS*/", WEATHER_JS, 1)
+            .replacen("/*WCCSS*/", WC_CSS, 1)
+            .replacen("/*WCJS*/", WC_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
     }
 }

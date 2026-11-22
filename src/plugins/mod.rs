@@ -7,3 +7,4 @@ pub mod system;
 pub mod wallpaper;
 pub mod weather;
 pub mod web;
+pub mod worldclock;
