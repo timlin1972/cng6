@@ -19,6 +19,7 @@ use crate::plugin::{
     Action, Ctx, Event, Level, PanelRect, Plugin, SettingRow, complete_from_help, is_placeholder,
 };
 use crate::plugins::{
+    books::{self, Books},
     cli::Cli,
     menu::Menu,
     message::Message,
@@ -179,6 +180,9 @@ impl App {
         app.register(Box::new(Weather::new(weather.clone())));
         let worldclock = worldclock::Shared::new();
         app.register(Box::new(WorldClock::new(worldclock.clone())));
+        // 電子書: plugin 負責書庫與轉檔, web 提供閱讀器
+        let books = books::Shared::new();
+        app.register(Box::new(Books::new(books.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -186,6 +190,7 @@ impl App {
                 music,
                 weather,
                 worldclock,
+                books,
             },
         )));
         app

@@ -4,9 +4,11 @@
 //! - 每個請求都會判斷來源是 PC(大畫面)或 mobile, 再依裝置產生頁面([`page`])
 //! - 請求紀錄透過 channel 傳回, 在 `on_tick` 時輸出到 Message
 
+mod books_api;
 mod cli_api;
 mod music_api;
 mod page;
+mod pdfjs;
 pub mod server;
 mod sysmon;
 mod wallpaper_api;

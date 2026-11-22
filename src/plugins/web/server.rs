@@ -28,6 +28,7 @@ use tokio_rustls::rustls::crypto::ring;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+use super::books_api::{self, BooksState};
 use super::cli_api;
 use super::music_api;
 use super::page::{detect_device, render_page};
@@ -35,7 +36,7 @@ use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{music, wallpaper, weather, worldclock};
+use crate::plugins::{books, music, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -90,6 +91,7 @@ pub struct Services {
     pub music: music::Shared,
     pub weather: weather::Shared,
     pub worldclock: worldclock::Shared,
+    pub books: books::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -176,6 +178,24 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
             shared: state.services.wallpaper.clone(),
             log: state.log.clone(),
         });
+    let books = Router::new()
+        .route("/api/books", get(books_api::list))
+        .route("/api/books/{file}", get(books_api::detail))
+        .route("/api/books/{file}/progress", put(books_api::save_progress))
+        .route("/api/books/upload/{name}", put(books_api::upload))
+        .route("/books/res/{file}/{*path}", get(books_api::resource))
+        .route("/books/txt/{file}/{n}", get(books_api::txt_chapter))
+        .route("/books/page/{file}/{n}", get(books_api::comic_page))
+        .route("/books/file/{file}", get(books_api::raw_file))
+        .route("/books/cover/{file}", get(books_api::cover))
+        .route("/books/fonts/f/{*path}", get(books_api::font_file))
+        .route("/books/fonts/{name}", get(books_api::font_css))
+        .route("/pdfjs/{*path}", get(super::pdfjs::file))
+        .layer(DefaultBodyLimit::max(books_api::MAX_UPLOAD))
+        .with_state(BooksState {
+            shared: state.services.books.clone(),
+            log: state.log.clone(),
+        });
     let worldclock = Router::new()
         .route("/api/worldclock", get(worldclock_api::info))
         .with_state(state.services.worldclock.clone());
@@ -200,7 +220,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .merge(wp)
         .merge(music)
         .merge(weather)
-        .merge(worldclock);
+        .merge(worldclock)
+        .merge(books);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {

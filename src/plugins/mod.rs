@@ -1,3 +1,4 @@
+pub mod books;
 pub mod cli;
 pub mod menu;
 pub mod message;
