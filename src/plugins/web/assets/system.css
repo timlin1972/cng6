@@ -1,0 +1,493 @@
+/* cng6 System 視窗: 即時系統資訊儀表板 */
+
+.sys-root {
+  --sys-bg: #f2f2f5;
+  --sys-card: #ffffff;
+  --sys-card-border: rgba(0, 0, 0, 0.06);
+  --sys-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.04);
+  --sys-text: #0b0b0b;
+  --sys-text-secondary: #52514e;
+  --sys-text-muted: #8a8984;
+  --sys-grid: #ececea;
+  /* 類別色(依固定順序): 藍、橘、青綠 */
+  --sys-s1: #2a78d6;
+  --sys-s2: #eb6834;
+  --sys-s3: #1baf7a;
+  /* 熱度圖: 單一色相, 由淡到深 */
+  --sys-heat: #2a78d6;
+  /* 狀態色 */
+  --sys-good: #0ca30c;
+  --sys-warning: #fab219;
+  --sys-critical: #d03b3b;
+  --sys-track-alpha: 0.14;
+
+  position: relative;
+  background: var(--sys-bg);
+  color: var(--sys-text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* 深色: 外觀選「系統」時跟著作業系統, 選「深色」時強制 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sys-root {
+    --sys-bg: #161618;
+    --sys-card: #1f1f22;
+    --sys-card-border: rgba(255, 255, 255, 0.06);
+    --sys-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --sys-text: #f0efec;
+    --sys-text-secondary: #c3c2b7;
+    --sys-text-muted: #8f8e88;
+    --sys-grid: #2c2c2f;
+    --sys-s1: #3987e5;
+    --sys-s2: #d95926;
+    --sys-s3: #199e70;
+    --sys-heat: #3987e5;
+    --sys-track-alpha: 0.2;
+  }
+}
+
+:root[data-theme="dark"] .sys-root {
+  --sys-bg: #161618;
+  --sys-card: #1f1f22;
+  --sys-card-border: rgba(255, 255, 255, 0.06);
+  --sys-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --sys-text: #f0efec;
+  --sys-text-secondary: #c3c2b7;
+  --sys-text-muted: #8f8e88;
+  --sys-grid: #2c2c2f;
+  --sys-s1: #3987e5;
+  --sys-s2: #d95926;
+  --sys-s3: #199e70;
+  --sys-heat: #3987e5;
+  --sys-track-alpha: 0.2;
+}
+
+.sys-scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--sys-text-muted) 45%, transparent) transparent;
+}
+
+.sys-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sys-scroll::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sys-text-muted) 45%, transparent);
+}
+
+/* ---- 主機資訊列 ---- */
+.sys-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 22px;
+  margin-bottom: 14px;
+  padding: 0 4px;
+}
+
+.sys-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sys-info-item .k {
+  font-size: 11px;
+  color: var(--sys-text-muted);
+}
+
+.sys-info-item .v {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sys-text);
+  white-space: nowrap;
+}
+
+.sys-live {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--sys-text-secondary);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--sys-card);
+  border: 1px solid var(--sys-card-border);
+}
+
+.sys-live .pulse {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sys-good);
+}
+
+.sys-live .pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--sys-good);
+  animation: sys-pulse 1.6s ease-out infinite;
+}
+
+.sys-live[data-state="off"] .pulse,
+.sys-live[data-state="off"] .pulse::after {
+  background: var(--sys-warning);
+}
+
+@keyframes sys-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+/* ---- 環形儀表 ---- */
+.sys-rings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sys-ring-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--sys-card);
+  border: 1px solid var(--sys-card-border);
+  border-radius: 14px;
+  box-shadow: var(--sys-card-shadow);
+  min-width: 0;
+}
+
+.sys-ring {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  flex: none;
+  --ring: var(--sys-s1);
+}
+
+.sys-ring[data-status="warning"] {
+  --ring: var(--sys-warning);
+}
+
+.sys-ring[data-status="critical"] {
+  --ring: var(--sys-critical);
+}
+
+.sys-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.sys-ring circle {
+  fill: none;
+  stroke-width: 11;
+}
+
+.sys-ring .track {
+  stroke: var(--ring);
+  opacity: var(--sys-track-alpha);
+}
+
+.sys-ring .fill {
+  stroke: var(--ring);
+  stroke-linecap: round;
+  transition:
+    stroke-dasharray 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    stroke 0.3s;
+}
+
+.sys-ring-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.sys-ring-value .num {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.sys-ring-value .unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sys-text-secondary);
+  margin-left: 1px;
+}
+
+.sys-ring-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sys-ring-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sys-ring-sub {
+  font-size: 12px;
+  color: var(--sys-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sys-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--sys-text);
+}
+
+.sys-badge:empty {
+  display: none;
+}
+
+.sys-badge[data-status="warning"] {
+  background: color-mix(in srgb, var(--sys-warning) 22%, transparent);
+}
+
+.sys-badge[data-status="critical"] {
+  background: color-mix(in srgb, var(--sys-critical) 20%, transparent);
+}
+
+/* ---- 圖表卡片 ---- */
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.sys-card {
+  position: relative;
+  padding: 14px 16px 12px;
+  background: var(--sys-card);
+  border: 1px solid var(--sys-card-border);
+  border-radius: 14px;
+  box-shadow: var(--sys-card-shadow);
+  min-width: 0;
+}
+
+.sys-card.wide {
+  grid-column: 1 / -1;
+}
+
+.sys-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  min-height: 22px;
+}
+
+.sys-card-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sys-card-now {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sys-now-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--sys-text-secondary);
+}
+
+.sys-now-item b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sys-text);
+}
+
+.sys-now-label {
+  font-size: 11px;
+  color: var(--sys-text-muted);
+}
+
+.sys-key {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.sys-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--sys-text-secondary);
+  margin: -2px 0 4px;
+}
+
+.sys-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sys-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.sys-canvas-wrap canvas {
+  display: block;
+}
+
+.sys-sub-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sys-text-muted);
+  margin: 10px 0 6px;
+}
+
+.sys-select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--sys-text);
+  background: var(--sys-bg);
+  border: 1px solid var(--sys-card-border);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+/* ---- 磁碟空間 ---- */
+.sys-disks {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.sys-disk-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.sys-disk-mount {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sys-disk-val {
+  color: var(--sys-text-secondary);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.sys-disk-top b {
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+
+.sys-meter {
+  --m: var(--sys-s1);
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--m) calc(var(--sys-track-alpha) * 100%), transparent);
+  overflow: hidden;
+}
+
+.sys-meter[data-status="warning"] {
+  --m: var(--sys-warning);
+}
+
+.sys-meter[data-status="critical"] {
+  --m: var(--sys-critical);
+}
+
+.sys-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--m);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---- tooltip ---- */
+.sys-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 10;
+  pointer-events: none;
+  min-width: 140px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sys-card) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--sys-card-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.sys-tip.show {
+  opacity: 1;
+}
+
+.sys-tip-title {
+  font-size: 11px;
+  color: var(--sys-text-muted);
+  margin-bottom: 5px;
+}
+
+.sys-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  line-height: 1.6;
+}
+
+.sys-tip-val {
+  font-weight: 650;
+  color: var(--sys-text);
+}
+
+.sys-tip-name {
+  color: var(--sys-text-secondary);
+}

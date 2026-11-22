@@ -30,3 +30,10 @@ rustc-ice-*.txt
 
 # cng6 執行時產生的指令歷史
 cli_history.txt
+
+# web 自動產生的自簽憑證與私鑰
+web_cert.pem
+web_key.pem
+
+# 桌布圖片(使用者自己的檔案)
+/wallpapers/

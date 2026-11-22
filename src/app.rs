@@ -19,8 +19,15 @@ use crate::plugin::{
     Action, Ctx, Event, Level, PanelRect, Plugin, SettingRow, complete_from_help, is_placeholder,
 };
 use crate::plugins::{
-    cli::Cli, menu::Menu, message::Message, settings::SettingsPanel, system::SystemInfo,
+    cli::Cli,
+    menu::Menu,
+    message::Message,
+    settings::SettingsPanel,
+    system::SystemInfo,
+    wallpaper::{self, Wallpaper},
+    web::Web,
 };
+use crate::remote::{self, Op, Reply, Request};
 use crate::settings::Settings;
 
 const CLI: &str = "cli";
@@ -28,6 +35,12 @@ const CLI: &str = "cli";
 const SETTINGS_FILE: &str = "settings.conf";
 /// 單次處理最多執行的指令數, 防止 script 互相 source 造成無窮迴圈
 const MAX_EXECUTE: usize = 10_000;
+
+/// 只能在 TUI 使用的指令(網頁 CLI 不能執行, 也不會出現在補完)
+const TUI_ONLY: &[&str] = &["panel", "focus", "menu", "cli", "message"];
+
+/// 最多記住幾個遠端連線的層次
+const MAX_SESSIONS: usize = 64;
 
 /// 核心(非 plugin)的指令群組
 const CORE_GROUPS: &[(&str, &str)] = &[("panel", "panel 顯示控制"), ("plugin", "plugin 資訊")];
@@ -114,10 +127,17 @@ pub struct App {
     /// CLI 目前所在的層次, 空的表示最上層
     path: Vec<String>,
     running: bool,
+    /// 網頁 CLI 送來的請求
+    remote_rx: remote::Receiver,
+    /// 每個遠端連線所在的層次
+    sessions: HashMap<String, Vec<String>>,
+    /// 執行遠端請求時, 收集輸出(不送到 TUI)
+    capture: Option<Reply>,
 }
 
 impl App {
     pub fn new() -> Self {
+        let (remote_tx, remote_rx) = remote::channel();
         let mut app = Self {
             plugins: Vec::new(),
             visible: Vec::new(),
@@ -128,6 +148,9 @@ impl App {
             settings: Settings::new(SETTINGS_FILE),
             path: Vec::new(),
             running: true,
+            remote_rx,
+            sessions: HashMap::new(),
+            capture: None,
         };
         // 預設必備的 plugin
         app.register(Box::new(Cli::new()));
@@ -136,6 +159,10 @@ impl App {
         app.register(Box::new(SystemInfo::new()));
         app.register(Box::new(SettingsPanel::new()));
         app.register(Box::new(Menu));
+        // 桌布: plugin 負責設定與指令, web 讀取同一份狀態
+        let wallpaper = wallpaper::Shared::new();
+        app.register(Box::new(Wallpaper::new(wallpaper.clone())));
+        app.register(Box::new(Web::new(remote_tx, wallpaper)));
         app
     }
 
@@ -154,6 +181,18 @@ impl App {
     }
 
     fn broadcast(&mut self, ev: &Event) {
+        // 執行遠端請求時: 輸出與補完結果回給網頁, 層次與歷史不影響 TUI
+        if let Some(cap) = self.capture.as_mut() {
+            match ev {
+                Event::Output(level, text) => return cap.output.push((*level, text.clone())),
+                Event::Completed { replacement, .. } => {
+                    cap.replacement = Some(replacement.clone());
+                    return;
+                }
+                Event::PathChanged(_) | Event::AddHistory(_) => return,
+                _ => {}
+            }
+        }
         for p in self.plugins.iter_mut() {
             p.on_event(ev);
         }
@@ -300,6 +339,56 @@ impl App {
         self.process(vec![Action::Execute(line.to_string())]);
     }
 
+    /// 處理網頁 CLI 送來的請求, 有處理任何請求時回傳 true(需要重繪)
+    pub fn handle_remote(&mut self) -> bool {
+        let mut any = false;
+        while let Ok(req) = self.remote_rx.try_recv() {
+            any = true;
+            self.run_remote(req);
+        }
+        any
+    }
+
+    fn run_remote(&mut self, req: Request) {
+        let session_path = self.sessions.get(&req.session).cloned().unwrap_or_default();
+        if req.op == Op::Exec && !req.line.trim().is_empty() {
+            // TUI 的 Message 記一行, 知道有人從網頁下了指令
+            let prompt = format!("{}>", session_path.join(" "));
+            self.broadcast(&Event::Output(
+                Level::Info,
+                format!("web {}: {prompt} {}", req.peer, req.line.trim()),
+            ));
+        }
+
+        // 換成這個連線的層次執行, 結束後換回 TUI 的層次
+        let tui_path = std::mem::replace(&mut self.path, session_path);
+        self.capture = Some(Reply::default());
+        let action = match req.op {
+            // 空的 exec 只用來查詢目前層次, 不執行
+            Op::Exec if req.line.trim().is_empty() => None,
+            Op::Exec => Some(Action::Execute(req.line)),
+            Op::Complete => Some(Action::Complete(req.line)),
+            Op::Describe => Some(Action::Describe(req.line)),
+            // 不執行指令, 下面直接附上設定
+            Op::Settings => None,
+        };
+        if let Some(action) = action {
+            self.process(vec![action]);
+        }
+        let mut reply = self.capture.take().unwrap_or_default();
+        reply.path = std::mem::replace(&mut self.path, tui_path);
+        if req.op == Op::Settings {
+            reply.settings = Some(self.setting_rows());
+        }
+
+        if self.sessions.len() >= MAX_SESSIONS && !self.sessions.contains_key(&req.session) {
+            self.sessions.clear();
+        }
+        self.sessions.insert(req.session, reply.path.clone());
+        // 網頁可能已經關閉, 送不到也沒關係
+        let _ = req.reply.send(reply);
+    }
+
     fn process(&mut self, actions: Vec<Action>) {
         let mut queue: VecDeque<Action> = actions.into();
         let mut executed = 0;
@@ -357,6 +446,12 @@ impl App {
                     self.save_settings(&mut ctx);
                     requeue(&mut queue, ctx);
                 }
+                Action::OpenMenu | Action::Quit if self.capture.is_some() => {
+                    self.broadcast(&Event::Output(
+                        Level::Error,
+                        "這個指令只能在 TUI 使用".into(),
+                    ));
+                }
                 Action::OpenMenu => {
                     self.menu = Some(MenuView::new());
                     let mut ctx = Ctx::new();
@@ -394,9 +489,12 @@ impl App {
             // 第一個字: 全域指令 + 這一層的子指令
             None => {
                 let mut c = self.children(&full);
+                let remote = self.capture.is_some();
                 c.extend(
                     GLOBAL_CMDS
                         .iter()
+                        // 網頁 CLI 不能離開程式
+                        .filter(|(n, _)| !(remote && matches!(*n, "quit" | "q")))
                         .map(|(n, d)| (n.to_string(), d.to_string())),
                 );
                 c
@@ -500,6 +598,10 @@ impl App {
                 let mut c: Vec<_> = CORE_GROUPS.iter().map(|(g, d)| pair(g, d)).collect();
                 c.push(pair("focus", "查看/切換 focus"));
                 c.extend(self.plugins.iter().map(|p| pair(p.name(), p.description())));
+                // 網頁 CLI 不列出 TUI 專用的指令
+                if self.capture.is_some() {
+                    c.retain(|(name, _)| !TUI_ONLY.contains(&name.as_str()));
+                }
                 c
             }
             ["panel", "show" | "toggle" | "rect", _name, rest @ ..] => RECT_PARAMS
@@ -576,6 +678,13 @@ impl App {
             "source" => Self::cmd_source(args, ctx),
             _ => {
                 full.extend_from_slice(&tokens);
+                if self.capture.is_some()
+                    && let Some(first) = full.first()
+                    && TUI_ONLY.contains(first)
+                {
+                    ctx.error(format!("'{first}' 只能在 TUI 使用"));
+                    return;
+                }
                 if self.is_group(&full) {
                     self.set_path(full.iter().map(|s| s.to_string()).collect());
                 } else {
@@ -986,8 +1095,13 @@ impl App {
     }
 
     fn broadcast_settings(&mut self) {
-        let rows: Vec<SettingRow> = self
-            .setting_defs()
+        let rows = self.setting_rows();
+        self.broadcast(&Event::SettingsChanged(rows));
+    }
+
+    /// 所有設定的目前值
+    fn setting_rows(&self) -> Vec<SettingRow> {
+        self.setting_defs()
             .into_iter()
             .map(|(key, desc, default)| SettingRow {
                 value: self.settings.get(&key).unwrap_or(&default).to_string(),
@@ -995,8 +1109,7 @@ impl App {
                 default,
                 desc,
             })
-            .collect();
-        self.broadcast(&Event::SettingsChanged(rows));
+            .collect()
     }
 
     // ----------------------------------------------------------------- menu

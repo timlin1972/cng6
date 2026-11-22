@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant" data-device="pc">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cng6</title>
+<script>
+// 外觀(系統/淺色/深色): 在畫面出現前套用, 避免閃一下
+try {
+  const t = localStorage.getItem("cng6.theme");
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+} catch {}
+</script>
+<style>
+/*CSS*/
+/*SYSCSS*/
+/*SHELLCSS*/
+/*SETCSS*/
+</style>
+</head>
+<body class="pc">
+<div id="wallpaper" aria-hidden="true"><div class="wp-layer"></div><div class="wp-layer"></div></div>
+<header id="menubar">
+  <span class="brand">cng6</span>
+  <span class="active-app"></span>
+  <span class="spacer"></span>
+  <div class="theme-wrap">
+    <button class="theme-btn" aria-label="外觀" aria-haspopup="menu" title="外觀">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="half"/></svg>
+    </button>
+    <div class="theme-menu" role="menu" hidden>
+      <div class="theme-menu-title">外觀</div>
+      <button role="menuitemradio" data-theme="system"><span class="check">✓</span>系統</button>
+      <button role="menuitemradio" data-theme="light"><span class="check">✓</span>淺色</button>
+      <button role="menuitemradio" data-theme="dark"><span class="check">✓</span>深色</button>
+    </div>
+  </div>
+  <span class="clock"></span>
+</header>
+<main id="desktop"></main>
+<nav id="dock"></nav>
+<script>
+/*SYSJS*/
+/*SHELLJS*/
+/*SETJS*/
+/*JS*/
+</script>
+</body>
+</html>

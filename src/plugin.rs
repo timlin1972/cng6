@@ -74,8 +74,8 @@ impl std::fmt::Display for PanelRect {
     }
 }
 
-/// 一筆設定(給 Settings plugin 顯示)
-#[derive(Debug, Clone)]
+/// 一筆設定(給 Settings plugin 與網頁顯示)
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SettingRow {
     pub key: String,
     pub value: String,

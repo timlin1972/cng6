@@ -1,0 +1,545 @@
+/* cng6 PC 版桌面: 上方選單列、桌面視窗、下方 Dock */
+
+:root {
+  color-scheme: light;
+  --menubar-h: 28px;
+  --dock-h: 78px;
+  --dock-gap: 10px;
+  --radius: 10px;
+  --title-h: 34px;
+
+  --text: #1d1d1f;
+  --text-dim: #6e6e73;
+  --menubar-bg: rgba(255, 255, 255, 0.55);
+  --dock-bg: rgba(255, 255, 255, 0.32);
+  --dock-border: rgba(255, 255, 255, 0.45);
+  --win-bg: #f5f5f7;
+  --win-title-bg: #e8e8ed;
+  --win-title-bg-inactive: #f0f0f3;
+  --win-border: rgba(0, 0, 0, 0.18);
+  --win-shadow: 0 18px 50px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  --btn-hover: rgba(0, 0, 0, 0.08);
+  --close-hover: #e81123;
+  --term-bg: #1e1e1e;
+  --term-text: #d4d4d4;
+  --accent: #0a84ff;
+  --menu-bg: #f6f6f6;
+}
+
+/* 深色: 外觀選「系統」時跟著作業系統, 選「深色」時強制 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --text: #f5f5f7;
+    --text-dim: #a1a1a6;
+    --menubar-bg: rgba(30, 30, 30, 0.55);
+    --dock-bg: rgba(40, 40, 40, 0.45);
+    --dock-border: rgba(255, 255, 255, 0.15);
+    --win-bg: #2a2a2c;
+    --win-title-bg: #38383a;
+    --win-title-bg-inactive: #303032;
+    --win-border: rgba(255, 255, 255, 0.12);
+    --btn-hover: rgba(255, 255, 255, 0.1);
+    --menu-bg: #2a2a2c;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --text: #f5f5f7;
+  --text-dim: #a1a1a6;
+  --menubar-bg: rgba(30, 30, 30, 0.55);
+  --dock-bg: rgba(40, 40, 40, 0.45);
+  --dock-border: rgba(255, 255, 255, 0.15);
+  --win-bg: #2a2a2c;
+  --win-title-bg: #38383a;
+  --win-title-bg-inactive: #303032;
+  --win-border: rgba(255, 255, 255, 0.12);
+  --btn-hover: rgba(255, 255, 255, 0.1);
+  --menu-bg: #2a2a2c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans TC",
+    "Microsoft JhengHei", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html {
+  background-color: #0f0c29;
+  background:
+    radial-gradient(ellipse at 20% 15%, #6a5acd 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 30%, #ff7eb3 0%, transparent 50%),
+    radial-gradient(ellipse at 60% 95%, #1fa2ff 0%, transparent 55%),
+    linear-gradient(135deg, #24243e 0%, #302b63 50%, #0f0c29 100%);
+}
+
+/* ---- 桌布(資料夾裡的圖片; 沒有設定時顯示上面的漸層) ---- */
+#wallpaper {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.wp-layer {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+
+.wp-layer.on {
+  opacity: 1;
+}
+
+/* ---- 上方選單列 ---- */
+#menubar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--menubar-h);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  background: var(--menubar-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  z-index: 100000;
+}
+
+#menubar .brand {
+  font-weight: 700;
+}
+
+#menubar .active-app {
+  font-weight: 600;
+}
+
+#menubar .spacer {
+  flex: 1;
+}
+
+#menubar .clock {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 外觀選單 ---- */
+.theme-wrap {
+  position: relative;
+}
+
+.theme-btn {
+  width: 26px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+
+.theme-btn:hover,
+.theme-btn[aria-expanded="true"] {
+  background: rgba(127, 127, 127, 0.25);
+}
+
+.theme-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.theme-btn svg .half {
+  fill: var(--text);
+  stroke: none;
+}
+
+.theme-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 150px;
+  padding: 5px;
+  border-radius: 9px;
+  /* 選單列已有毛玻璃效果, 巢狀的 backdrop-filter 會畫錯, 這裡用不透明背景 */
+  background: var(--menu-bg);
+  border: 0.5px solid var(--win-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.theme-menu-title {
+  padding: 3px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.theme-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  padding: 4px 10px 4px 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.theme-menu button:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.theme-menu .check {
+  width: 18px;
+  visibility: hidden;
+  font-weight: 700;
+}
+
+.theme-menu button[aria-checked="true"] .check {
+  visibility: visible;
+}
+
+/* ---- 桌面(視窗可以活動的範圍) ---- */
+#desktop {
+  position: fixed;
+  top: var(--menubar-h);
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* ---- 視窗 ---- */
+.window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  min-height: 160px;
+  background: var(--win-bg);
+  border: 0.5px solid var(--win-border);
+  border-radius: var(--radius);
+  box-shadow: var(--win-shadow);
+  overflow: hidden;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease;
+}
+
+.window.animating {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease,
+    left 0.22s ease,
+    top 0.22s ease,
+    width 0.22s ease,
+    height 0.22s ease,
+    border-radius 0.22s ease;
+}
+
+.window.opening {
+  opacity: 0;
+  transform: scale(0.94);
+}
+
+.window.minimized {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.window.maximized {
+  border-radius: 0;
+}
+
+.window.inactive {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+}
+
+.titlebar {
+  flex: none;
+  height: var(--title-h);
+  display: flex;
+  align-items: center;
+  background: var(--win-title-bg);
+  border-bottom: 0.5px solid var(--win-border);
+  cursor: default;
+}
+
+.window.inactive .titlebar {
+  background: var(--win-title-bg-inactive);
+}
+
+.window.inactive .titlebar .title {
+  color: var(--text-dim);
+}
+
+.titlebar .icon {
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 12px;
+  flex: none;
+}
+
+.titlebar .title {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titlebar .buttons {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar button {
+  width: 46px;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+
+.titlebar button svg {
+  width: 10px;
+  height: 10px;
+  stroke: currentColor;
+  stroke-width: 1;
+  fill: none;
+}
+
+.titlebar button:hover {
+  background: var(--btn-hover);
+}
+
+.titlebar button.close:hover {
+  background: var(--close-hover);
+  color: #fff;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.placeholder {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--text-dim);
+  padding: 16px;
+}
+
+.placeholder b {
+  display: block;
+  font-size: 15px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.content.terminal {
+  background: var(--term-bg);
+  color: var(--term-text);
+  font-family: "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK TC", monospace;
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+.terminal .line.dim {
+  color: #7f7f7f;
+}
+
+.terminal .cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: var(--term-text);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 改變大小的邊框把手 */
+.resize {
+  position: absolute;
+  z-index: 2;
+}
+
+.resize.n,
+.resize.s {
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resize.e,
+.resize.w {
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resize.n { top: -3px; }
+.resize.s { bottom: -3px; }
+.resize.e { right: -3px; }
+.resize.w { left: -3px; }
+
+.resize.ne,
+.resize.nw,
+.resize.se,
+.resize.sw {
+  width: 12px;
+  height: 12px;
+}
+
+.resize.ne { top: -3px; right: -3px; cursor: nesw-resize; }
+.resize.sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
+.resize.nw { top: -3px; left: -3px; cursor: nwse-resize; }
+.resize.se { bottom: -3px; right: -3px; cursor: nwse-resize; }
+
+.window.maximized .resize {
+  display: none;
+}
+
+/* 拖曳中不要選到文字 */
+body.dragging,
+body.dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* ---- Dock ---- */
+#dock {
+  position: fixed;
+  left: 50%;
+  bottom: var(--dock-gap);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 12px 6px;
+  background: var(--dock-bg);
+  border: 1px solid var(--dock-border);
+  border-radius: 20px;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  z-index: 100000;
+}
+
+.dock-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 0;
+  padding: 0 0 8px;
+  background: none;
+  cursor: default;
+}
+
+.dock-item .app-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+  transform-origin: bottom center;
+}
+
+.dock-item:hover .app-icon {
+  transform: scale(1.22) translateY(-6px);
+}
+
+.dock-item:active .app-icon {
+  filter: brightness(0.8);
+}
+
+.dock-item .app-icon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.dock-item .label {
+  position: absolute;
+  bottom: calc(100% + 18px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(30, 30, 30, 0.85);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
+.dock-item:hover .label {
+  opacity: 1;
+}
+
+.dock-item .dot {
+  position: absolute;
+  bottom: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  opacity: 0;
+}
+
+.dock-item.running .dot {
+  opacity: 1;
+}
+
+.app-icon.cli {
+  background: linear-gradient(180deg, #3a3a3c, #1c1c1e);
+}
+
+.app-icon.system {
+  background: linear-gradient(180deg, #34c759, #248a3d);
+}
+
+.app-icon.settings {
+  background: linear-gradient(180deg, #a1a1a6, #636366);
+}
+
+.app-icon.message {
+  background: linear-gradient(180deg, #5ac8fa, #0a84ff);
+}
