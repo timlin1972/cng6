@@ -37,3 +37,6 @@ web_key.pem
 
 # 桌布圖片(使用者自己的檔案)
 /wallpapers/
+
+# 這台機器自己的設定(由 settings set 寫入)
+/settings.conf
