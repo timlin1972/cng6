@@ -145,6 +145,18 @@
       return r;
     }
 
+    // 讓其他模組(例如音樂的迷你播放列)可以打開某個 plugin 的畫面
+    window.MobileNav = {
+      openApp(name) {
+        const app = Apps.find(name);
+        if (!app) return;
+        tab = "overview";
+        while (stacks.overview.length > 1) pop();
+        show();
+        openDetail(app);
+      },
+    };
+
     function openDetail(app) {
       const view = app.view && Apps.views[app.view];
       if (view) {

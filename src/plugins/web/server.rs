@@ -29,10 +29,11 @@ use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use super::cli_api;
+use super::music_api;
 use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
-use crate::plugins::wallpaper;
+use crate::plugins::{music, wallpaper};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -77,7 +78,14 @@ struct AppState {
     port: u16,
     /// 網頁 CLI 的請求交給主迴圈
     remote: remote::Sender,
-    wallpaper: wallpaper::Shared,
+    services: Services,
+}
+
+/// 其他 plugin 和網頁伺服器共用的狀態; 新的 plugin 需要網頁 API 時加在這裡
+#[derive(Clone)]
+pub struct Services {
+    pub wallpaper: wallpaper::Shared,
+    pub music: music::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -87,7 +95,7 @@ pub fn start(
     cfg: &Config,
     log: Sender<String>,
     remote: remote::Sender,
-    wallpaper: wallpaper::Shared,
+    services: Services,
 ) -> Result<(Handle, Vec<String>), String> {
     let mut notes = Vec::new();
     let tls = if cfg.https {
@@ -121,7 +129,7 @@ pub fn start(
         log,
         port: cfg.port,
         remote,
-        wallpaper,
+        services,
     };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let thread = std::thread::spawn(move || {
@@ -161,9 +169,15 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .route("/wallpapers/{name}", get(wallpaper_api::image))
         .layer(DefaultBodyLimit::max(wallpaper_api::MAX_UPLOAD))
         .with_state(WpState {
-            shared: state.wallpaper.clone(),
+            shared: state.services.wallpaper.clone(),
             log: state.log.clone(),
         });
+    let music = Router::new()
+        .route("/api/music", get(music_api::info))
+        .route("/music/file/{name}", get(music_api::file))
+        .route("/music/cover/{name}", get(music_api::cover))
+        .route("/music/lyrics/{name}", get(music_api::lyrics))
+        .with_state(state.services.music.clone());
     let cli = Router::new()
         .route("/api/cli", post(cli_api::cli))
         .with_state(state.remote.clone());
@@ -173,7 +187,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .with_state(state.clone())
         .merge(api)
         .merge(cli)
-        .merge(wp);
+        .merge(wp)
+        .merge(music);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {

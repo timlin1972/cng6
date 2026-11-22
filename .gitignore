@@ -40,3 +40,6 @@ web_key.pem
 
 # 這台機器自己的設定(由 settings set 寫入)
 /settings.conf
+
+# 音樂檔(使用者自己的檔案)
+/music/

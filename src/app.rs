@@ -22,6 +22,7 @@ use crate::plugins::{
     cli::Cli,
     menu::Menu,
     message::Message,
+    music::{self, Music},
     settings::SettingsPanel,
     system::SystemInfo,
     wallpaper::{self, Wallpaper},
@@ -168,7 +169,13 @@ impl App {
         // 桌布: plugin 負責設定與指令, web 讀取同一份狀態
         let wallpaper = wallpaper::Shared::new();
         app.register(Box::new(Wallpaper::new(wallpaper.clone())));
-        app.register(Box::new(Web::new(remote_tx, wallpaper)));
+        // 音樂: plugin 負責下載與檔案管理, web 提供播放
+        let music = music::Shared::new();
+        app.register(Box::new(Music::new(music.clone())));
+        app.register(Box::new(Web::new(
+            remote_tx,
+            crate::plugins::web::server::Services { wallpaper, music },
+        )));
         app
     }
 

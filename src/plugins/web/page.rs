@@ -68,6 +68,9 @@ const APPS_JS: &str = include_str!("assets/apps.js");
 const MOBILE_HTML: &str = include_str!("assets/mobile.html");
 const MOBILE_CSS: &str = include_str!("assets/mobile.css");
 const MOBILE_JS: &str = include_str!("assets/mobile.js");
+/// 音樂(PC 與手機共用)
+const MUSIC_CSS: &str = include_str!("assets/music.css");
+const MUSIC_JS: &str = include_str!("assets/music.js");
 const SYSTEM_CSS: &str = include_str!("assets/system.css");
 const SYSTEM_JS: &str = include_str!("assets/system.js");
 const SHELL_CSS: &str = include_str!("assets/shell.css");
@@ -88,6 +91,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*SHELLJS*/", SHELL_JS, 1)
             .replacen("/*SETCSS*/", SETTINGS_CSS, 1)
             .replacen("/*SETJS*/", SETTINGS_JS, 1)
+            .replacen("/*MUSICCSS*/", MUSIC_CSS, 1)
+            .replacen("/*MUSICJS*/", MUSIC_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
         // 手機: 底部分頁(總覽 / 指令 / 設定), 共用 apps / shell / system 的程式
         Device::Mobile => MOBILE_HTML
@@ -97,6 +102,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*APPSJS*/", APPS_JS, 1)
             .replacen("/*SYSJS*/", SYSTEM_JS, 1)
             .replacen("/*SHELLJS*/", SHELL_JS, 1)
+            .replacen("/*MUSICCSS*/", MUSIC_CSS, 1)
+            .replacen("/*MUSICJS*/", MUSIC_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
     }
 }

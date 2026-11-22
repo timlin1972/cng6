@@ -7,6 +7,7 @@ edition = "2024"
 axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 hyper-util = { version = "0.1.21", features = ["server-auto", "tokio", "service"] }
+lofty = "0.25.5"
 ratatui = "0.30"
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -15,4 +16,6 @@ sysinfo = "0.38.4"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "fs"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["fs"] }
 unicode-width = "0.2.3"

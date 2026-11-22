@@ -1,0 +1,1282 @@
+/* cng6 音樂: PC 視窗與手機共用 */
+
+.mu-root {
+  --mu-bg: #ffffff;
+  --mu-side: #f5f5f7;
+  --mu-line: rgba(0, 0, 0, 0.08);
+  --mu-hover: rgba(0, 0, 0, 0.05);
+  --mu-text: #1d1d1f;
+  --mu-text-2: #6e6e73;
+  --mu-text-3: #a1a1a6;
+  --mu-accent: #fa2d48;
+  --mu-bar: rgba(250, 250, 252, 0.9);
+  --mu-cover-bg: linear-gradient(135deg, #e5e5ea, #d1d1d6);
+  --mu-danger: #d03b3b;
+
+  position: relative;
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "side main lyrics"
+    "bar bar bar";
+  background: var(--mu-bg);
+  color: var(--mu-text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mu-root {
+    --mu-bg: #1e1e20;
+    --mu-side: #252528;
+    --mu-line: rgba(255, 255, 255, 0.08);
+    --mu-hover: rgba(255, 255, 255, 0.06);
+    --mu-text: #f5f5f7;
+    --mu-text-2: #a1a1a6;
+    --mu-text-3: #6e6e73;
+    --mu-bar: rgba(40, 40, 43, 0.92);
+    --mu-cover-bg: linear-gradient(135deg, #3a3a3c, #2c2c2e);
+    --mu-danger: #ff6b6b;
+  }
+}
+
+:root[data-theme="dark"] .mu-root {
+  --mu-bg: #1e1e20;
+  --mu-side: #252528;
+  --mu-line: rgba(255, 255, 255, 0.08);
+  --mu-hover: rgba(255, 255, 255, 0.06);
+  --mu-text: #f5f5f7;
+  --mu-text-2: #a1a1a6;
+  --mu-text-3: #6e6e73;
+  --mu-bar: rgba(40, 40, 43, 0.92);
+  --mu-cover-bg: linear-gradient(135deg, #3a3a3c, #2c2c2e);
+  --mu-danger: #ff6b6b;
+}
+
+.mu-root.mu-show-lyrics.mu-pc {
+  grid-template-columns: 210px minmax(0, 1fr) 320px;
+}
+
+.mu-root button {
+  font: inherit;
+  color: inherit;
+  cursor: default;
+}
+
+/* ---- 側欄 ---- */
+.mu-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px;
+  background: var(--mu-side);
+  border-right: 1px solid var(--mu-line);
+  min-height: 0;
+}
+
+.mu-search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--mu-hover);
+  color: var(--mu-text);
+  font: inherit;
+  outline: none;
+}
+
+.mu-search input:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mu-accent) 45%, transparent);
+}
+
+.mu-nav {
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mu-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+}
+
+.mu-nav-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--mu-accent);
+}
+
+.mu-nav-item:hover {
+  background: var(--mu-hover);
+}
+
+.mu-nav-item.on {
+  background: color-mix(in srgb, var(--mu-accent) 14%, transparent);
+  font-weight: 600;
+}
+
+.mu-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mu-nav-count {
+  font-size: 11px;
+  color: var(--mu-text-3);
+}
+
+.mu-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mu-text-2);
+}
+
+.mu-nav-add {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 18px !important;
+  line-height: 1;
+  color: var(--mu-accent) !important;
+}
+
+.mu-nav-add:hover {
+  background: var(--mu-hover);
+}
+
+.mu-nav-empty {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--mu-text-3);
+}
+
+/* ---- 主畫面 ---- */
+.mu-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.mu-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 10px;
+}
+
+.mu-head h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mu-head-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mu-head-text h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mu-head-sub {
+  font-size: 12px;
+  color: var(--mu-text-2);
+  white-space: nowrap;
+}
+
+.mu-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mu-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 16px;
+  scrollbar-width: thin;
+}
+
+.mu-btn {
+  min-height: 30px;
+  padding: 4px 14px;
+  border: 1px solid var(--mu-line);
+  border-radius: 8px;
+  background: var(--mu-bg);
+  font-size: 13px !important;
+  font-weight: 600;
+  color: var(--mu-accent) !important;
+}
+
+.mu-btn.primary {
+  border-color: transparent;
+  background: var(--mu-accent);
+  color: #fff !important;
+}
+
+.mu-btn:disabled {
+  opacity: 0.45;
+}
+
+.mu-ib {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--mu-text-2) !important;
+}
+
+.mu-ib svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mu-ib:hover:not(:disabled) {
+  background: var(--mu-hover);
+  color: var(--mu-text) !important;
+}
+
+.mu-ib:disabled {
+  opacity: 0.35;
+}
+
+.mu-ib.toggle.on {
+  color: var(--mu-accent) !important;
+}
+
+.mu-ib.toggle[data-one="true"]::after {
+  content: "1";
+  position: absolute;
+  font-size: 9px;
+  font-weight: 800;
+  transform: translate(9px, -8px);
+  color: var(--mu-accent);
+}
+
+.mu-ib.danger:hover:not(:disabled) {
+  color: var(--mu-danger) !important;
+}
+
+/* 歌曲列表 */
+.mu-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.mu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  outline: none;
+}
+
+.mu-row:hover,
+.mu-row:focus-visible {
+  background: var(--mu-hover);
+}
+
+.mu-row.playing .mu-row-title {
+  color: var(--mu-accent);
+  font-weight: 650;
+}
+
+.mu-row.playing .mu-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(var(--mu-accent), var(--mu-accent)) 30% 75% / 3px 40% no-repeat,
+    linear-gradient(var(--mu-accent), var(--mu-accent)) 50% 75% / 3px 60% no-repeat,
+    linear-gradient(var(--mu-accent), var(--mu-accent)) 70% 75% / 3px 30% no-repeat,
+    rgba(0, 0, 0, 0.45);
+}
+
+.mu-cover,
+.mu-now-cover,
+.mu-mini-cover {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--mu-cover-bg);
+  color: var(--mu-text-3);
+}
+
+.mu-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+
+.mu-cover svg,
+.mu-now-cover svg,
+.mu-mini-cover svg {
+  width: 45%;
+  height: 45%;
+}
+
+.mu-cover img,
+.mu-now-cover img,
+.mu-mini-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mu-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mu-row-title {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mu-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  border: 1px solid var(--mu-line);
+  color: var(--mu-text-2);
+}
+
+.mu-row-dur {
+  flex: none;
+  font-size: 12px;
+  color: var(--mu-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mu-row .mu-ib {
+  flex: none;
+  opacity: 0;
+}
+
+.mu-row:hover .mu-ib,
+.mu-row:focus-within .mu-ib {
+  opacity: 1;
+}
+
+.mu-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--mu-text-2);
+  font-size: 13px;
+}
+
+/* 下載 */
+.mu-dl-form {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px 0;
+}
+
+.mu-dl-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--mu-line);
+  border-radius: 8px;
+  background: var(--mu-bg);
+  color: var(--mu-text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+}
+
+.mu-dl-input:focus {
+  border-color: var(--mu-accent);
+}
+
+.mu-note {
+  padding: 8px 10px 12px;
+  font-size: 12px;
+  color: var(--mu-text-3);
+}
+
+.mu-dl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-top: 1px solid var(--mu-line);
+}
+
+.mu-dl-failed .mu-row-sub {
+  color: var(--mu-danger);
+  white-space: normal;
+}
+
+.mu-progress {
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--mu-hover);
+  overflow: hidden;
+}
+
+.mu-progress-fill {
+  height: 100%;
+  background: var(--mu-accent);
+  transition: width 0.4s;
+}
+
+/* ---- 歌詞 ---- */
+.mu-lyrics-panel {
+  grid-area: lyrics;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--mu-line);
+  background: var(--mu-side);
+}
+
+.mu-lyrics-panel[hidden] {
+  display: none;
+}
+
+.mu-lyrics-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 6px;
+  font-size: 13px;
+}
+
+.mu-lang {
+  font: inherit;
+  font-size: 12px;
+  color: var(--mu-text);
+  background: var(--mu-bg);
+  border: 1px solid var(--mu-line);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.mu-lyrics {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30% 18px 50%;
+  scrollbar-width: none;
+  mask-image: linear-gradient(transparent, #000 15%, #000 80%, transparent);
+  -webkit-mask-image: linear-gradient(transparent, #000 15%, #000 80%, transparent);
+}
+
+.mu-ly {
+  padding: 6px 0;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--mu-text-3);
+  white-space: pre-wrap;
+  cursor: default;
+  transition:
+    color 0.3s,
+    transform 0.3s;
+  transform-origin: left center;
+}
+
+.mu-ly:hover {
+  color: var(--mu-text-2);
+}
+
+.mu-ly.on {
+  color: var(--mu-text);
+  transform: scale(1.04);
+}
+
+.mu-lyrics-empty {
+  padding-top: 40%;
+  text-align: center;
+  color: var(--mu-text-3);
+  font-size: 13px;
+}
+
+/* ---- 播放列 ---- */
+.mu-bar {
+  grid-area: bar;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--mu-bar);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-top: 1px solid var(--mu-line);
+}
+
+.mu-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mu-now-cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.mu-now-text {
+  min-width: 0;
+}
+
+.mu-now-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-now-sub {
+  font-size: 12px;
+  color: var(--mu-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-ctl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mu-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mu-ib.play {
+  width: 40px;
+  height: 40px;
+  background: var(--mu-text);
+  color: var(--mu-bg) !important;
+}
+
+.mu-ib.play:hover {
+  background: var(--mu-text) !important;
+  color: var(--mu-bg) !important;
+  transform: scale(1.05);
+}
+
+.mu-ib.play svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mu-seek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.mu-time {
+  flex: none;
+  width: 38px;
+  font-size: 11px;
+  color: var(--mu-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mu-time.cur {
+  text-align: right;
+}
+
+.mu-range,
+.mu-vol {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  --p: 0%;
+}
+
+.mu-range::-webkit-slider-runnable-track,
+.mu-vol::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(var(--mu-text-2), var(--mu-text-2)) 0 / var(--p) 100% no-repeat, var(--mu-hover);
+}
+
+.mu-range::-moz-range-track,
+.mu-vol::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mu-hover);
+}
+
+.mu-range::-moz-range-progress,
+.mu-vol::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mu-text-2);
+}
+
+.mu-range::-webkit-slider-thumb,
+.mu-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--mu-text);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mu-range::-moz-range-thumb,
+.mu-vol::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mu-text);
+}
+
+.mu-seek:hover .mu-range::-webkit-slider-thumb,
+.mu-extra:hover .mu-vol::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.mu-extra {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mu-vol {
+  max-width: 100px;
+}
+
+.mu-vol-icon {
+  display: grid;
+  color: var(--mu-text-2);
+}
+
+.mu-vol-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mu-ib.toggle.has:not(.on) {
+  color: var(--mu-text) !important;
+}
+
+/* ---- 選單 ---- */
+.mu-menu-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+}
+
+.mu-menu {
+  position: absolute;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 70%;
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: 10px;
+  background: var(--mu-bg);
+  border: 1px solid var(--mu-line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
+.mu-menu-head {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mu-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font-size: 13px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-menu-item:hover:not(:disabled) {
+  background: var(--mu-accent);
+  color: #fff !important;
+}
+
+.mu-menu-item:disabled {
+  color: var(--mu-text-3) !important;
+}
+
+.mu-menu-item.danger {
+  color: var(--mu-danger) !important;
+}
+
+.mu-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--mu-line);
+}
+
+/* ---- 提示 ---- */
+.mu-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  z-index: 30;
+  transform: translate(-50%, 10px);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(30, 30, 32, 0.92);
+  color: #fff;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.mu-toast[data-ok="false"]::before {
+  content: "● ";
+  color: #ff6b6b;
+}
+
+/* ======================= 手機 ======================= */
+.mu-root.mu-mobile {
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main"
+    "bar";
+  --mu-bg: var(--bg, #f2f2f7);
+  font-size: 15px;
+}
+
+.mu-mobile .mu-side {
+  display: none;
+}
+
+/* 搜尋放到主畫面上方 */
+.mu-mobile .mu-mtabs {
+  flex: none;
+  display: flex;
+  margin: 10px 16px 0;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--mu-text-3) 24%, transparent);
+}
+
+.mu-mobile .mu-mtabs button {
+  flex: 1;
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mu-mobile .mu-mtabs button.on {
+  background: var(--seg-on, #fff);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  font-weight: 600;
+}
+
+.mu-mobile .mu-head {
+  padding: 14px 16px 8px;
+}
+
+.mu-mobile .mu-body {
+  padding: 0 8px 16px;
+}
+
+.mu-mobile .mu-row {
+  min-height: 60px;
+}
+
+.mu-mobile .mu-cover {
+  width: 48px;
+  height: 48px;
+}
+
+.mu-mobile .mu-row-title {
+  font-size: 16px;
+}
+
+.mu-mobile .mu-row .mu-ib {
+  opacity: 1;
+  width: 40px;
+  height: 40px;
+}
+
+.mu-mobile .mu-row-dur {
+  display: none;
+}
+
+.mu-mobile .mu-btn {
+  min-height: 38px;
+  font-size: 15px !important;
+}
+
+.mu-mobile .mu-dl-input {
+  font-size: 16px;
+  padding: 10px 12px;
+}
+
+.mu-mobile .mu-chev {
+  color: var(--mu-text-3);
+  font-size: 22px;
+}
+
+/* 迷你播放列 */
+.mu-mobile .mu-bar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "now ctl";
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.mu-mobile .mu-now {
+  grid-area: now;
+}
+
+.mu-mobile .mu-ctl {
+  grid-area: ctl;
+}
+
+.mu-mobile .mu-seek,
+.mu-mobile .mu-extra,
+.mu-mobile .mu-ib.toggle,
+.mu-mobile .mu-ib[title="上一首"],
+.mu-mobile .mu-collapse {
+  display: none;
+}
+
+.mu-mobile .mu-buttons .mu-ib {
+  width: 44px;
+  height: 44px;
+}
+
+.mu-mobile .mu-ib.play {
+  width: 44px;
+  height: 44px;
+  background: none;
+  color: var(--mu-text) !important;
+}
+
+.mu-mobile .mu-ib.play svg {
+  width: 26px;
+  height: 26px;
+}
+
+.mu-mobile:not(.mu-has-track) .mu-bar {
+  display: none;
+}
+
+/* 展開成全螢幕播放器 */
+.mu-mobile.mu-full {
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+
+.mu-mobile.mu-full .mu-main {
+  display: none;
+}
+
+.mu-mobile.mu-full .mu-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 8px 24px calc(20px + env(safe-area-inset-bottom, 0px));
+  backdrop-filter: none;
+  background: var(--mu-bg);
+  border: 0;
+  overflow-y: auto;
+}
+
+.mu-mobile.mu-full .mu-collapse {
+  display: grid;
+  align-self: center;
+  width: 44px;
+  height: 32px;
+}
+
+.mu-mobile.mu-full .mu-now {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.mu-mobile.mu-full .mu-now-cover {
+  width: min(78vw, 42dvh);
+  height: min(78vw, 42dvh);
+  align-self: center;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+
+.mu-mobile.mu-full .mu-now-title {
+  font-size: 20px;
+  font-weight: 700;
+  white-space: normal;
+}
+
+.mu-mobile.mu-full .mu-now-sub {
+  font-size: 15px;
+}
+
+.mu-mobile.mu-full .mu-seek {
+  display: flex;
+}
+
+.mu-mobile.mu-full .mu-range {
+  height: 24px;
+}
+
+.mu-mobile.mu-full .mu-range::-webkit-slider-thumb {
+  opacity: 1;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+}
+
+.mu-mobile.mu-full .mu-time {
+  font-size: 12px;
+}
+
+.mu-mobile.mu-full .mu-buttons {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.mu-mobile.mu-full .mu-ib.toggle,
+.mu-mobile.mu-full .mu-ib[title="上一首"] {
+  display: grid;
+}
+
+.mu-mobile.mu-full .mu-ib.play {
+  width: 64px;
+  height: 64px;
+  background: var(--mu-text);
+  color: var(--mu-bg) !important;
+}
+
+.mu-mobile.mu-full .mu-ib.play svg {
+  width: 30px;
+  height: 30px;
+}
+
+.mu-mobile.mu-full .mu-buttons .mu-ib svg {
+  width: 26px;
+  height: 26px;
+}
+
+.mu-mobile.mu-full .mu-extra {
+  display: flex;
+  justify-content: space-around;
+}
+
+.mu-mobile.mu-full .mu-extra .mu-ib {
+  width: 44px;
+  height: 44px;
+}
+
+/* 全螢幕時歌詞在播放器下方 */
+.mu-mobile .mu-lyrics-panel {
+  display: none;
+}
+
+.mu-mobile.mu-full.mu-show-lyrics .mu-lyrics-panel {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--mu-bg);
+  border: 0;
+  padding-top: 44px;
+}
+
+.mu-mobile.mu-full.mu-show-lyrics .mu-lyrics-panel::before {
+  content: "點右下的歌詞按鈕收起";
+  position: absolute;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mu-text-3);
+}
+
+.mu-mobile.mu-full.mu-show-lyrics .mu-bar {
+  position: relative;
+  z-index: 6;
+  margin-top: auto;
+  max-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.mu-mobile.mu-full.mu-show-lyrics .mu-extra {
+  position: absolute;
+  right: 16px;
+  bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+}
+
+.mu-mobile.mu-full.mu-show-lyrics .mu-bar > :not(.mu-extra) {
+  display: none;
+}
+
+.mu-mobile .mu-ly {
+  font-size: 22px;
+  padding: 8px 0;
+}
+
+/* 底部選單(手機) */
+.mu-menu-wrap.sheet {
+  position: fixed;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 100;
+}
+
+.mu-menu-wrap.sheet .mu-menu {
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  max-width: none;
+  max-height: 70dvh;
+  padding: 6px;
+  border-radius: 14px;
+}
+
+.mu-menu-wrap.sheet .mu-menu-item {
+  min-height: 48px;
+  font-size: 17px !important;
+  text-align: center;
+}
+
+.mu-menu-wrap.sheet .mu-menu-head {
+  text-align: center;
+  font-size: 13px;
+  padding: 8px;
+}
+
+.mu-menu-item.cancel {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+/* ======================= 正在播放(關掉視窗也看得到) ======================= */
+.mu-mini-pc {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 280px;
+  margin-right: 4px;
+}
+
+.mu-mini-pc[hidden],
+.mu-mini-m[hidden] {
+  display: none;
+}
+
+.mu-mini-pc button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.mu-mini-pc button:hover {
+  background: rgba(127, 127, 127, 0.25);
+}
+
+.mu-mini-pc .mu-mini-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-mini-pc .mu-mini-cover {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #fa2d48, #a5163a);
+  color: #fff;
+}
+
+.mu-mini-pc svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mu-mini-pc .mu-mini-play svg,
+.mu-mini-pc .mu-mini-next svg {
+  fill: currentColor;
+}
+
+/* 手機: 分頁列上方 */
+.mu-mini-m {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 8px 6px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.mu-mini-m button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--text, #000);
+  font: inherit;
+}
+
+.mu-mini-m .mu-mini-open {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.mu-mini-m .mu-mini-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mu-mini-m .mu-mini-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fa2d48, #a5163a);
+  color: #fff;
+}
+
+.mu-mini-m .mu-mini-play,
+.mu-mini-m .mu-mini-next {
+  width: 44px;
+}
+
+.mu-mini-m svg {
+  width: 24px;
+  height: 24px;
+}
+
+.mu-mini-m .mu-mini-cover svg {
+  width: 45%;
+  height: 45%;
+}

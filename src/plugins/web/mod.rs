@@ -5,8 +5,9 @@
 //! - 請求紀錄透過 channel 傳回, 在 `on_tick` 時輸出到 Message
 
 mod cli_api;
+mod music_api;
 mod page;
-mod server;
+pub mod server;
 mod sysmon;
 mod wallpaper_api;
 
@@ -17,7 +18,6 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::plugin::{Ctx, Plugin, parse_bool, parse_usize};
-use crate::plugins::wallpaper;
 use crate::remote;
 use crate::webui::{Button, Card, Status, WebMeta};
 use server::{Config, Handle};
@@ -44,11 +44,11 @@ pub struct Web {
     restart_notice: bool,
     /// 網頁 CLI 的請求送到主迴圈
     remote: remote::Sender,
-    wallpaper: wallpaper::Shared,
+    services: server::Services,
 }
 
 impl Web {
-    pub fn new(remote: remote::Sender, wallpaper: wallpaper::Shared) -> Self {
+    pub fn new(remote: remote::Sender, services: server::Services) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             config: Config {
@@ -63,7 +63,7 @@ impl Web {
             rx,
             restart_notice: false,
             remote,
-            wallpaper,
+            services,
         }
     }
 
@@ -83,7 +83,7 @@ impl Web {
             &self.config,
             self.tx.clone(),
             self.remote.clone(),
-            self.wallpaper.clone(),
+            self.services.clone(),
         ) {
             Ok((handle, notes)) => {
                 for n in notes {
