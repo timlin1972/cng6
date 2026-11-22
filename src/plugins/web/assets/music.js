@@ -75,6 +75,15 @@ const MusicPlayer = (() => {
 
   /** 播放一個清單, 從 file 開始 */
   function playList(files, file, name) {
+    // 點的是正在播放的那首: 不重新播放, 只把佇列換成這個清單(之後的上一首/下一首依這個清單)
+    if (file && queue[index] === file && audio.src) {
+      queue = files.slice();
+      source = name || "所有歌曲";
+      index = queue.indexOf(file);
+      if (audio.paused) audio.play().catch(() => {});
+      emit();
+      return;
+    }
     queue = files.slice();
     source = name || "所有歌曲";
     let i = file ? queue.indexOf(file) : 0;
@@ -383,6 +392,7 @@ const MusicApp = (() => {
     volume: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>`,
     down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`,
     download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>`,
+    listAdd: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h12M3 12h12M3 18h7M18 14v7M14.5 17.5h7"/></svg>`,
   };
 
   function h(tag, cls, text) {
@@ -535,17 +545,17 @@ const MusicApp = (() => {
     }
     const sameView = (v) => v.kind === view.kind && v.name === view.name;
 
-    async function createPlaylist() {
+    async function createPlaylist({ stay = false } = {}) {
       const name = prompt("播放清單名稱");
       if (!name || !name.trim()) return null;
       const r = await MusicPlayer.command(`/music playlist create ${MusicPlayer.quoteArg(name.trim())}`);
       toast(el, r.text || "已建立", r.ok);
-      if (r.ok) {
+      if (!r.ok) return null;
+      if (!stay) {
         view = { kind: "playlist", name: name.trim() };
         render();
-        return name.trim();
       }
-      return null;
+      return name.trim();
     }
 
     // ---------------------------------------------------------- 列表
@@ -626,7 +636,11 @@ const MusicApp = (() => {
           trackMenu(t, more, i);
         });
         row.append(more);
-        const play = () => MusicPlayer.playList(shown, f, title);
+        const play = () => {
+          MusicPlayer.playList(shown, f, title);
+          // 手機: 直接進入單曲播放頁
+          if (mobile) el.classList.add("mu-full");
+        };
         row.addEventListener("click", play);
         row.addEventListener("keydown", (e) => e.key === "Enter" && play());
         list.appendChild(row);
@@ -645,11 +659,11 @@ const MusicApp = (() => {
       list.querySelector(".mu-row.playing")?.scrollIntoView({ block: "nearest" });
     }
 
-    function trackMenu(t, anchor) {
-      const lib = MusicPlayer.lib;
-      const items = [{ header: t.title }];
-      for (const p of lib.playlists) {
-        if (p.name === view.name) continue;
+    /** 加入播放清單的選單項目; skip: 不列出的清單(例如目前正在看的) */
+    function playlistItems(t, skip) {
+      const items = [{ header: `加入播放清單 · ${t.title}` }];
+      for (const p of MusicPlayer.lib.playlists) {
+        if (p.name === skip) continue;
         const has = p.files.includes(t.file);
         items.push({
           label: has ? `已在「${p.name}」` : `加入「${p.name}」`,
@@ -660,10 +674,15 @@ const MusicApp = (() => {
       items.push({
         label: "加入新的播放清單…",
         action: async () => {
-          const name = await createPlaylist();
+          const name = await createPlaylist({ stay: true });
           if (name) addTo(name, t.file);
         },
       });
+      return items;
+    }
+
+    function trackMenu(t, anchor) {
+      const items = playlistItems(t, view.kind === "playlist" ? view.name : null);
       items.push("-");
       if (view.kind === "playlist") {
         items.push({ label: `從「${view.name}」移除`, action: () => removeFrom(view.name, t.file) });
@@ -832,8 +851,13 @@ const MusicApp = (() => {
     bRepeat.addEventListener("click", MusicPlayer.cycleRepeat);
     const extra = bar.querySelector(".mu-extra");
     const bLyrics = btn("lyrics", "歌詞", "mu-ib toggle");
+    const bAdd = btn("listAdd", "加入播放清單");
     const bDelete = btn("trash", "刪除正在播放的歌", "mu-ib danger");
-    extra.append(bLyrics, bDelete);
+    extra.append(bLyrics, bAdd, bDelete);
+    bAdd.addEventListener("click", () => {
+      const t = MusicPlayer.current();
+      if (t) popMenu(el, bAdd, playlistItems(t), mobile);
+    });
     if (!mobile) {
       const vol = h("input", "mu-vol");
       vol.type = "range";
@@ -908,6 +932,7 @@ const MusicApp = (() => {
       bRepeat.dataset.one = MusicPlayer.repeat === "one";
       bRepeat.title = { off: "不重複", all: "重複全部", one: "重複一首" }[MusicPlayer.repeat];
       bDelete.disabled = !t;
+      bAdd.disabled = !t;
       bLyrics.classList.toggle("has", !!(t && t.lyrics.length));
       el.classList.toggle("mu-has-track", !!t);
       onTime();

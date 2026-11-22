@@ -19,7 +19,7 @@ const CORE = {
   },
 };
 // 自訂畫面的預設大小
-const VIEW_SIZE = { system: [980, 720], music: [1040, 700] };
+const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720] };
 
 let APPS = [];
 

@@ -19,3 +19,11 @@ tokio-stream = { version = "0.1.19", features = ["sync"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
 unicode-width = "0.2.3"
+ureq = { version = "3.5.2", default-features = false, features = ["rustls", "json"] }
+
+# 減少 debug 編譯的寫入量(SD 卡在大量寫入時容易卡住)
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

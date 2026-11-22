@@ -1,0 +1,502 @@
+/* cng6 天氣: PC 視窗與手機共用 */
+
+.wx-root {
+  --wx-bg: #f2f5fa;
+  --wx-card: #ffffff;
+  --wx-line: rgba(0, 0, 0, 0.07);
+  --wx-text: #1d1d1f;
+  --wx-text-2: #6e6e73;
+  --wx-text-3: #a1a1a6;
+  --wx-accent: #0a84ff;
+  --wx-temp: #f08a24;
+  --wx-rain: #4aa3f0;
+  --wx-warning: #fab219;
+  --wx-critical: #d03b3b;
+  --wx-hero: linear-gradient(160deg, #4f8fe8 0%, #6aa9f2 55%, #8cc0f5 100%);
+
+  position: relative;
+  background: var(--wx-bg);
+  color: var(--wx-text);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .wx-root {
+    --wx-bg: #121417;
+    --wx-card: #1d2026;
+    --wx-line: rgba(255, 255, 255, 0.07);
+    --wx-text: #f5f5f7;
+    --wx-text-2: #a1a1a6;
+    --wx-text-3: #6e6e73;
+    --wx-critical: #ff6b6b;
+    --wx-hero: linear-gradient(160deg, #1d3a66 0%, #24497d 55%, #2f5a92 100%);
+  }
+}
+
+:root[data-theme="dark"] .wx-root {
+  --wx-bg: #121417;
+  --wx-card: #1d2026;
+  --wx-line: rgba(255, 255, 255, 0.07);
+  --wx-text: #f5f5f7;
+  --wx-text-2: #a1a1a6;
+  --wx-text-3: #6e6e73;
+  --wx-critical: #ff6b6b;
+  --wx-hero: linear-gradient(160deg, #1d3a66 0%, #24497d 55%, #2f5a92 100%);
+}
+
+.wx-root button {
+  font: inherit;
+  color: inherit;
+  cursor: default;
+}
+
+.wx-scroll {
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 18px 24px;
+  scrollbar-width: thin;
+}
+
+/* ---- 上方 ---- */
+.wx-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.wx-cities {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.wx-cities[hidden] {
+  display: none;
+}
+
+.wx-city {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--wx-line);
+  border-radius: 999px;
+  background: var(--wx-card);
+  font-size: 13px !important;
+}
+
+.wx-city.on {
+  border-color: transparent;
+  background: var(--wx-accent);
+  color: #fff !important;
+}
+
+.wx-city-alert {
+  color: var(--wx-warning);
+  font-size: 10px;
+}
+
+.wx-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.wx-updated {
+  font-size: 12px;
+  color: var(--wx-text-2);
+}
+
+.wx-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-card);
+  color: var(--wx-accent) !important;
+  font-size: 13px !important;
+  font-weight: 600;
+}
+
+.wx-btn.danger {
+  color: var(--wx-critical) !important;
+}
+
+/* ---- 目前天氣 ---- */
+.wx-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  background: var(--wx-hero);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(40, 90, 170, 0.18);
+}
+
+.wx-hero-main {
+  flex: 1 1 220px;
+}
+
+.wx-place {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+.wx-temp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wx-temp {
+  font-size: 64px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.wx-desc {
+  font-size: 16px;
+  opacity: 0.95;
+}
+
+.wx-hero-side {
+  flex: 1 1 200px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+.wx-fact {
+  display: flex;
+  flex-direction: column;
+}
+
+.wx-fact-k {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.wx-fact b {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.wx-more {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff !important;
+  font-size: 18px !important;
+}
+
+.wx-city-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.wx-city-actions[hidden] {
+  display: none;
+}
+
+.wx-hint {
+  font-size: 12px;
+  color: var(--wx-text-2);
+}
+
+.wx-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.wx-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.wx-icon.big {
+  width: 64px;
+  height: 64px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.15));
+}
+
+.wx-icon.sm {
+  width: 26px;
+  height: 26px;
+}
+
+/* ---- 警示(一律有圖示與文字) ---- */
+.wx-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--wx-warning) 16%, var(--wx-card));
+  border-left: 4px solid var(--wx-warning);
+  font-size: 14px;
+}
+
+.wx-alert.critical {
+  background: color-mix(in srgb, var(--wx-critical) 14%, var(--wx-card));
+  border-left-color: var(--wx-critical);
+}
+
+.wx-alert-icon {
+  color: var(--wx-warning);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wx-alert.critical .wx-alert-icon {
+  color: var(--wx-critical);
+}
+
+.wx-alert-detail {
+  font-size: 13px;
+  color: var(--wx-text-2);
+  margin-top: 2px;
+}
+
+/* ---- 卡片 ---- */
+.wx-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+}
+
+.wx-card h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wx-text-2);
+}
+
+/* 逐小時 */
+.wx-hours-wrap {
+  overflow-x: auto;
+  margin: 0 -16px;
+  padding: 0 16px;
+  scrollbar-width: thin;
+}
+
+.wx-hour-cols,
+.wx-rain {
+  display: flex;
+}
+
+.wx-hour,
+.wx-rain-col {
+  flex: none;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.wx-hour {
+  gap: 4px;
+}
+
+.wx-hour-time {
+  font-size: 12px;
+  color: var(--wx-text-2);
+}
+
+.wx-chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.wx-chart text {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--wx-text);
+}
+
+.wx-rain {
+  height: 54px;
+  align-items: flex-end;
+  border-top: 1px solid var(--wx-line);
+  padding-top: 4px;
+}
+
+.wx-rain-col {
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.wx-rain-bar {
+  width: 14px;
+  border-radius: 3px 3px 0 0;
+  background: var(--wx-rain);
+}
+
+.wx-rain-val {
+  font-size: 10px;
+  color: var(--wx-text-2);
+}
+
+.wx-legend {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--wx-text-3);
+}
+
+/* 7 天 */
+.wx-days {
+  display: flex;
+  flex-direction: column;
+}
+
+.wx-day {
+  display: grid;
+  grid-template-columns: 52px 30px 40px 36px minmax(60px, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border-top: 1px solid var(--wx-line);
+}
+
+.wx-day:first-child {
+  border-top: 0;
+}
+
+.wx-day-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wx-day-rain {
+  font-size: 12px;
+  color: var(--wx-rain);
+  font-weight: 600;
+}
+
+.wx-day-min {
+  text-align: right;
+  color: var(--wx-text-2);
+  font-size: 14px;
+}
+
+.wx-day-max {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wx-range {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--wx-text-3) 25%, transparent);
+}
+
+.wx-range-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #5ac8fa, #f6c344 60%, #f08a24);
+}
+
+.wx-foot {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--wx-text-3);
+  text-align: center;
+}
+
+.wx-empty {
+  padding: 60px 16px;
+  text-align: center;
+  color: var(--wx-text-2);
+}
+
+.wx-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translate(-50%, 10px);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(30, 30, 32, 0.92);
+  color: #fff;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+
+.wx-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.wx-toast[data-ok="false"]::before {
+  content: "● ";
+  color: #ff6b6b;
+}
+
+/* ---- 手機 ---- */
+.wx-mobile.wx-root {
+  height: 100%;
+  --wx-bg: var(--bg, #f2f2f7);
+}
+
+.wx-mobile .wx-scroll {
+  padding: 12px 14px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.wx-mobile .wx-btn {
+  min-height: 38px;
+  font-size: 14px !important;
+}
+
+.wx-mobile .wx-temp {
+  font-size: 56px;
+}
+
+.wx-mobile .wx-day {
+  grid-template-columns: 44px 28px 36px 32px minmax(40px, 1fr) 32px;
+  gap: 6px;
+}
+
+/* 手機: 城市切換佔一整列, 按鈕放到下一列 */
+.wx-mobile .wx-cities {
+  flex: 1 1 100%;
+}
+
+.wx-mobile .wx-actions {
+  width: 100%;
+}
+
+.wx-mobile .wx-updated {
+  margin-right: auto;
+}

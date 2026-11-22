@@ -26,6 +26,7 @@ use crate::plugins::{
     settings::SettingsPanel,
     system::SystemInfo,
     wallpaper::{self, Wallpaper},
+    weather::{self, Weather},
     web::Web,
 };
 use crate::remote::{self, Candidate, Op, Reply, Request};
@@ -172,9 +173,16 @@ impl App {
         // 音樂: plugin 負責下載與檔案管理, web 提供播放
         let music = music::Shared::new();
         app.register(Box::new(Music::new(music.clone())));
+        // 天氣: plugin 在背景更新, web 讀取同一份資料
+        let weather = weather::Shared::new();
+        app.register(Box::new(Weather::new(weather.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
-            crate::plugins::web::server::Services { wallpaper, music },
+            crate::plugins::web::server::Services {
+                wallpaper,
+                music,
+                weather,
+            },
         )));
         app
     }

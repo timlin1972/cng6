@@ -5,4 +5,5 @@ pub mod music;
 pub mod settings;
 pub mod system;
 pub mod wallpaper;
+pub mod weather;
 pub mod web;
