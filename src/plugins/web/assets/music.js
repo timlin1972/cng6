@@ -418,6 +418,7 @@ const MusicApp = (() => {
     volume: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>`,
     down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`,
     download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>`,
+    edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
     listAdd: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h12M3 12h12M3 18h7M18 14v7M14.5 17.5h7"/></svg>`,
   };
 
@@ -594,8 +595,13 @@ const MusicApp = (() => {
       return lib.tracks.map((t) => t.file);
     }
 
+    let renderedView = null; // 上一次畫的是哪個畫面(用來決定要不要保留捲動位置)
     function render() {
       if (closed) return;
+      const viewKey = JSON.stringify([view, search.value]);
+      const sameView = viewKey === renderedView;
+      const keepScroll = body.scrollTop;
+      renderedView = viewKey;
       renderNav();
       head.replaceChildren();
       body.replaceChildren();
@@ -681,8 +687,9 @@ const MusicApp = (() => {
         );
       }
       body.appendChild(list);
-      // 保持正在播放的歌在可見範圍
-      list.querySelector(".mu-row.playing")?.scrollIntoView({ block: "nearest" });
+      // 同一個畫面重畫(下載進度、清單變動): 留在原本捲到的地方; 換了畫面: 捲到正在播放的歌
+      if (sameView) body.scrollTop = keepScroll;
+      else revealPlaying();
     }
 
     /** 加入播放清單的選單項目; skip: 不列出的清單(例如目前正在看的) */
@@ -713,6 +720,7 @@ const MusicApp = (() => {
       if (view.kind === "playlist") {
         items.push({ label: `從「${view.name}」移除`, action: () => removeFrom(view.name, t.file) });
       }
+      items.push({ label: "編輯資訊…", action: () => editTrack(t) });
       items.push({ label: "刪除歌曲…", danger: true, action: () => confirmDelete(t) });
       popMenu(el, anchor, items, mobile);
     }
@@ -742,6 +750,67 @@ const MusicApp = (() => {
       view = mobile ? { kind: "playlists" } : { kind: "all" };
       render();
     }
+    /** 編輯歌名 / 歌手 / 專輯(寫入音樂檔的標籤) */
+    function editTrack(t) {
+      el.querySelector(".mu-edit-wrap")?.remove();
+      const wrap = h("div", "mu-edit-wrap");
+      const form = h("form", "mu-edit");
+      const head = h("div", "mu-edit-head");
+      const txt = h("div", "mu-edit-file");
+      txt.append(h("b", null, "編輯資訊"), h("div", null, t.file));
+      head.append(coverEl(t, "mu-cover"), txt);
+      form.append(head);
+      const fields = [
+        // 一律填入目前顯示的歌名(檔案沒有歌名標籤時是檔名), 沒有修改就不會寫入
+        ["title", "歌名", t.title],
+        ["artist", "歌手", t.artist],
+        ["album", "專輯", t.album],
+      ];
+      const inputs = {};
+      for (const [key, label, value] of fields) {
+        const row = h("label", "mu-edit-row");
+        const inp = h("input", "mu-edit-input");
+        inp.value = value || "";
+        inp.placeholder = key === "title" ? "" : "(沒有)";
+        inp.dataset.orig = inp.value;
+        inp.spellcheck = false;
+        row.append(h("span", null, label), inp);
+        form.append(row);
+        inputs[key] = inp;
+      }
+      form.append(h("div", "mu-edit-note", "會寫入音樂檔本身, 其他播放器也看得到; 留空表示清除"));
+      const btns = h("div", "mu-edit-btns");
+      const cancel = h("button", "mu-btn", "取消");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => wrap.remove());
+      const save = h("button", "mu-btn primary", "儲存");
+      save.type = "submit";
+      btns.append(cancel, save);
+      form.append(btns);
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const changed = Object.entries(inputs).filter(([, inp]) => inp.value.trim() !== inp.dataset.orig.trim());
+        if (!changed.length) return wrap.remove();
+        save.disabled = true;
+        const q = MusicPlayer.quoteArg;
+        let err = null;
+        for (const [key, inp] of changed) {
+          const v = inp.value.trim();
+          const r = await MusicPlayer.command(`/music tag ${q(t.file)} ${key}${v ? ` ${q(v)}` : ""}`);
+          if (!r.ok) err = r.text;
+        }
+        save.disabled = false;
+        if (err) return toast(el, err, false);
+        wrap.remove();
+        toast(el, "已更新歌曲資訊");
+      });
+      form.addEventListener("keydown", (e) => e.key === "Escape" && wrap.remove());
+      wrap.addEventListener("pointerdown", (e) => e.target === wrap && wrap.remove());
+      wrap.append(form);
+      el.append(wrap);
+      setTimeout(() => inputs.artist.focus(), 50);
+    }
+
     async function confirmDelete(t) {
       const playing = MusicPlayer.current()?.file === t.file;
       const msg = `刪除「${t.title}」?\n\n檔案(含封面與歌詞)會從 music 資料夾刪除, 也會從所有播放清單移除。${playing ? "\n正在播放, 會先跳到下一首。" : ""}`;
@@ -877,9 +946,14 @@ const MusicApp = (() => {
     bRepeat.addEventListener("click", MusicPlayer.cycleRepeat);
     const extra = bar.querySelector(".mu-extra");
     const bLyrics = btn("lyrics", "歌詞", "mu-ib toggle");
+    const bEdit = btn("edit", "編輯歌曲資訊");
     const bAdd = btn("listAdd", "加入播放清單");
     const bDelete = btn("trash", "刪除正在播放的歌", "mu-ib danger");
-    extra.append(bLyrics, bAdd, bDelete);
+    extra.append(bLyrics, bEdit, bAdd, bDelete);
+    bEdit.addEventListener("click", () => {
+      const t = MusicPlayer.current();
+      if (t) editTrack(t);
+    });
     bAdd.addEventListener("click", () => {
       const t = MusicPlayer.current();
       if (t) popMenu(el, bAdd, playlistItems(t), mobile);
@@ -959,6 +1033,7 @@ const MusicApp = (() => {
       bRepeat.title = { off: "不重複", all: "重複全部", one: "重複一首" }[MusicPlayer.repeat];
       bDelete.disabled = !t;
       bAdd.disabled = !t;
+      bEdit.disabled = !t;
       bLyrics.classList.toggle("has", !!(t && t.lyrics.length));
       el.classList.toggle("mu-has-track", !!t);
       onTime();
@@ -1010,6 +1085,7 @@ const MusicApp = (() => {
 
     // ---------------------------------------------------------- 資料
     let lastKey = "";
+    let lastFile = MusicPlayer.current()?.file || null;
     const off = MusicPlayer.on(() => {
       // 曲目或清單有變才重畫列表, 播放狀態只更新播放列與標示
       const lib = MusicPlayer.lib;
@@ -1021,8 +1097,24 @@ const MusicApp = (() => {
         const cur = MusicPlayer.current();
         body.querySelectorAll(".mu-row[data-file]").forEach((r) => r.classList.toggle("playing", !!cur && r.dataset.file === cur.file));
       }
+      // 換歌時把列表捲到正在播放的那首(只在換歌時, 不會在使用者自己捲動時拉回來)
+      const curFile = MusicPlayer.current()?.file || null;
+      if (curFile !== lastFile) {
+        lastFile = curFile;
+        revealPlaying();
+      }
       renderBar();
     });
+
+    /** 正在播放的那首不在畫面上時, 平滑捲到列表中間 */
+    function revealPlaying() {
+      const row = body.querySelector(".mu-row.playing");
+      if (!row) return;
+      const b = body.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      if (r.top >= b.top && r.bottom <= b.bottom) return;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
     search.addEventListener("input", render);
 
     let timer = null;

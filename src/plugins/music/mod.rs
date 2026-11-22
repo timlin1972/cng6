@@ -491,6 +491,10 @@ impl Plugin for Music {
                 "delete <file>",
                 "刪除歌曲(含封面與歌詞, 也會從播放清單移除)",
             ),
+            (
+                "tag <file> <title|artist|album> [value]",
+                "修改歌名/歌手/專輯(寫入音樂檔), 不寫內容表示清除",
+            ),
             ("playlist list", "列出播放清單"),
             ("playlist show <name>", "播放清單的歌曲"),
             ("playlist create <name>", "建立播放清單"),
@@ -505,7 +509,12 @@ impl Plugin for Music {
 
     fn complete(&self, args: &[&str]) -> Vec<(String, String)> {
         match args {
-            ["delete"] => self.track_names(),
+            ["delete" | "tag"] => self.track_names(),
+            ["tag", _] => library::TAG_FIELDS
+                .iter()
+                .map(|(f, d)| (f.to_string(), d.to_string()))
+                .collect(),
+            ["tag", _, _] => vec![("[value]".into(), "新的內容, 不寫表示清除".into())],
             ["cancel"] => self
                 .shared
                 .jobs()
@@ -654,6 +663,32 @@ impl Plugin for Music {
                         }
                     }
                     Err(e) => ctx.error(format!("無法刪除 {file}: {e}")),
+                }
+            }
+            ["tag", file, field, value @ ..] => {
+                let dir = self.shared.dir();
+                if !library::is_safe_name(file)
+                    || !library::is_audio(file)
+                    || !dir.join(file).is_file()
+                {
+                    ctx.error(format!("沒有音樂檔 '{file}'"));
+                    return;
+                }
+                let value = value.join(" ");
+                match library::set_tag(&dir.join(file), field, &value) {
+                    Ok(()) => {
+                        self.shared.bump();
+                        let name = library::TAG_FIELDS
+                            .iter()
+                            .find(|(f, _)| f == field)
+                            .map_or(*field, |(_, n)| *n);
+                        if value.trim().is_empty() {
+                            ctx.info(format!("{file}: 已清除{name}"));
+                        } else {
+                            ctx.info(format!("{file}: {name} = {}", value.trim()));
+                        }
+                    }
+                    Err(e) => ctx.error(format!("{file}: {e}")),
                 }
             }
             ["playlist", rest @ ..] => self.cmd_playlist(rest, ctx),

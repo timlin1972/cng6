@@ -848,3 +848,9 @@
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* 輸入框一定要可以選取(Safari 在 user-select: none 的區塊裡會卡住游標) */
+.set-root input {
+  -webkit-user-select: text;
+  user-select: text;
+}

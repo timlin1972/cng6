@@ -1280,3 +1280,103 @@
   width: 45%;
   height: 45%;
 }
+
+/* ---- 編輯歌曲資訊 ---- */
+.mu-edit-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.mu-edit {
+  width: min(440px, calc(100% - 32px));
+  padding: 18px 20px 16px;
+  border-radius: 14px;
+  background: var(--mu-bg);
+  border: 1px solid var(--mu-line);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mu-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.mu-edit-head .mu-cover {
+  width: 52px;
+  height: 52px;
+}
+
+.mu-edit-file {
+  min-width: 0;
+}
+
+.mu-edit-file b {
+  font-size: 16px;
+}
+
+.mu-edit-file div {
+  font-size: 12px;
+  color: var(--mu-text-2);
+  word-break: break-all;
+}
+
+.mu-edit-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--mu-text-2);
+}
+
+.mu-edit-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--mu-line);
+  border-radius: 8px;
+  background: var(--mu-side);
+  color: var(--mu-text);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.mu-edit-input:focus {
+  border-color: var(--mu-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mu-accent) 20%, transparent);
+}
+
+.mu-edit-note {
+  margin: 4px 0 14px;
+  font-size: 11px;
+  color: var(--mu-text-3);
+}
+
+.mu-edit-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mu-mobile .mu-edit-input {
+  font-size: 16px;
+  padding: 10px 12px;
+}
+
+/* 輸入框一定要可以選取: .mu-root 設了 user-select: none, iOS Safari 的輸入框在裡面時
+   游標會卡在最前面、不能移動或選取 */
+.mu-root input,
+.mu-root textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}

@@ -214,6 +214,45 @@ fn is_lang(s: &str) -> bool {
         && parts.all(|p| (2..=8).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
+/// 可以修改的標籤欄位
+pub const TAG_FIELDS: &[(&str, &str)] = &[("title", "歌名"), ("artist", "歌手"), ("album", "專輯")];
+
+/// 修改音樂檔的標籤(歌名、歌手、專輯); value 是空字串時清除該欄位。
+/// 其他標籤與內嵌封面保持不變。
+pub fn set_tag(path: &Path, field: &str, value: &str) -> Result<(), String> {
+    use lofty::config::WriteOptions;
+    use lofty::tag::Tag;
+
+    let mut file = lofty::read_from_path(path).map_err(|e| format!("無法讀取標籤: {e}"))?;
+    let primary = file.primary_tag_type();
+    // 沒有主要標籤(例如只有 ID3v1 的 mp3): 先複製現有的標籤, 不然其他欄位會不見
+    if file.primary_tag().is_none() {
+        let mut tag = file
+            .first_tag()
+            .cloned()
+            .unwrap_or_else(|| Tag::new(primary));
+        tag.re_map(primary);
+        file.insert_tag(tag);
+    }
+    let tag = file.primary_tag_mut().ok_or("這個格式不支援寫入標籤")?;
+    let value = value.trim().to_string();
+    match (field, value.is_empty()) {
+        ("title", true) => tag.remove_title(),
+        ("title", false) => tag.set_title(value),
+        ("artist", true) => tag.remove_artist(),
+        ("artist", false) => tag.set_artist(value),
+        ("album", true) => tag.remove_album(),
+        ("album", false) => tag.set_album(value),
+        _ => {
+            return Err(format!(
+                "不能修改的欄位 '{field}', 可用 title / artist / album"
+            ));
+        }
+    }
+    tag.save_to_path(path, WriteOptions::default())
+        .map_err(|e| format!("無法寫入標籤: {e}"))
+}
+
 /// 內嵌封面 (資料, MIME)
 pub fn embedded_cover(path: &Path) -> Option<(Vec<u8>, String)> {
     let file = lofty::read_from_path(path).ok()?;
@@ -349,6 +388,8 @@ mod tests {
         assert!(dir.join("notes.txt").exists());
 
         write_playlist(&dir, "最愛", &["B.flac".into()]).unwrap();
+        // 不是真的音樂檔: 寫標籤要回報錯誤, 不能 panic
+        assert!(set_tag(&dir.join("B.flac"), "artist", "X").is_err());
         assert_eq!(playlists(&dir)["最愛"], ["B.flac"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }

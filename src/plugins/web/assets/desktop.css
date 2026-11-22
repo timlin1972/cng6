@@ -485,6 +485,14 @@ html {
   display: none;
 }
 
+/* 頁面設了 user-select: none(拖曳視窗時不會選到文字), 輸入框要恢復可以選取,
+   不然 Safari 的游標會卡在最前面 */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* 拖曳中不要選到文字 */
 body.dragging,
 body.dragging * {
