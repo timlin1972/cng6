@@ -111,33 +111,30 @@ pub async fn send(State(st): State<ClusterState>, Json(req): Json<SendReq>) -> R
             continue;
         }
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let file = match tokio::fs::File::open(&path).await {
-            Ok(f) => f,
-            Err(e) => {
-                errors.push(format!("{p}: {e}"));
-                continue;
+        // 對方連線短暫中斷時重試(每次重新讀檔)
+        let mut last = String::new();
+        let mut ok = false;
+        for attempt in 1..=3 {
+            match upload_once(&bus, &req.node, &path, &name).await {
+                Ok(()) => {
+                    ok = true;
+                    break;
+                }
+                Err((retry, e)) => {
+                    last = e;
+                    if !retry {
+                        break;
+                    }
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt)).await;
+                    }
+                }
             }
-        };
-        let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, 128 * 1024));
-        let uri = format!(
-            "/api/files/upload?root=0&path={}&name={}",
-            enc(INBOX),
-            enc(&name)
-        );
-        let fwd = Request::builder()
-            .method(Method::PUT)
-            .uri(uri)
-            .header("content-type", "application/octet-stream")
-            .body(body)
-            .expect("request");
-        match bus.http(&req.node, fwd).await {
-            Ok(res) if res.status().is_success() => sent.push(name),
-            Ok(res) => {
-                let code = res.status();
-                let text = axum::body::to_bytes(res.into_body(), 4096).await.unwrap_or_default();
-                errors.push(format!("{name}: {code} {}", String::from_utf8_lossy(&text)));
-            }
-            Err(e) => errors.push(format!("{name}: {e}")),
+        }
+        if ok {
+            sent.push(name);
+        } else {
+            errors.push(format!("{name}: {last}"));
         }
     }
     Json(SendRes {
@@ -145,6 +142,36 @@ pub async fn send(State(st): State<ClusterState>, Json(req): Json<SendReq>) -> R
         errors,
     })
     .into_response()
+}
+
+/// 上傳一個檔案到 `node` 的「收到的檔案」; 失敗時回傳 (可以重試, 原因)
+async fn upload_once(
+    bus: &std::sync::Arc<crate::plugins::cluster::bus::Bus>,
+    node: &str,
+    path: &std::path::Path,
+    name: &str,
+) -> Result<(), (bool, String)> {
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| (false, e.to_string()))?;
+    let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, 128 * 1024));
+    let uri = format!("/api/files/upload?root=0&path={}&name={}", enc(INBOX), enc(name));
+    let fwd = Request::builder()
+        .method(Method::PUT)
+        .uri(uri)
+        .header("content-type", "application/octet-stream")
+        .body(body)
+        .map_err(|e| (false, e.to_string()))?;
+    let res = bus.http(node, fwd).await.map_err(|e| (true, e))?;
+    if res.status().is_success() {
+        return Ok(());
+    }
+    let code = res.status();
+    let text = axum::body::to_bytes(res.into_body(), 4096).await.unwrap_or_default();
+    let text = String::from_utf8_lossy(&text).into_owned();
+    // 傳輸途中斷線(對方回「上傳中斷」)可以重試; 其他錯誤(檔名不合法等)不行
+    let retry = text.contains("上傳中斷") || code.is_server_error();
+    Err((retry, format!("{code} {text}")))
 }
 
 fn enc(s: &str) -> String {

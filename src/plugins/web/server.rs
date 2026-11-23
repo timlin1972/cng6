@@ -263,8 +263,16 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
     let cli = Router::new()
         .route("/api/cli", post(cli_api::cli))
         .with_state(state.remote.clone());
+    // 把本機的檔案傳到另一台; 放在這裡, 別台看這台的檔案時也能叫這台傳送
+    let cluster_send = Router::new()
+        .route("/api/cluster/send", post(cluster_api::send))
+        .with_state(cluster_api::ClusterState {
+            shared: state.services.cluster.clone(),
+            files: state.services.files.clone(),
+        });
     Router::new()
         .merge(cli)
+        .merge(cluster_send)
         .merge(wp)
         .merge(music)
         .merge(weather)
@@ -281,7 +289,6 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
     let cluster = Router::new()
         .route("/api/cluster", get(cluster_api::info))
         .route("/api/cluster/clip", post(cluster_api::clip))
-        .route("/api/cluster/send", post(cluster_api::send))
         // 透過 MQTT 轉給另一台機器(檔案上傳不限大小, 由 cluster 限制)
         .route(
             "/api/cluster/node/{name}/{*rest}",

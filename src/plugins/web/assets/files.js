@@ -170,6 +170,7 @@ const FilesApp = (() => {
               <button class="fm-ib" data-act="mkdir" title="新增資料夾">${ICON.newdir}</button>
               <button class="fm-ib" data-act="newfile" title="新增檔案">${ICON.newfile}</button>
               <label class="fm-ib" title="上傳">${ICON.upload}<input type="file" multiple hidden></label>
+              <button class="fm-ib" data-act="del" title="刪除選取的項目(移到回收桶)" disabled>${ICON.trash}</button>
               <button class="fm-ib" data-act="more" title="更多">${ICON.more}</button>
             </div>
           </header>
@@ -435,7 +436,7 @@ const FilesApp = (() => {
     function render() {
       renderCrumbs();
       pasteBtn.hidden = !myClip() || mode !== "files";
-      el.querySelectorAll('[data-act="mkdir"], [data-act="newfile"], .fm-tools label').forEach((b) => (b.hidden = mode !== "files"));
+      el.querySelectorAll('[data-act="mkdir"], [data-act="newfile"], [data-act="del"], .fm-tools label').forEach((b) => (b.hidden = mode !== "files"));
       filterEl.hidden = mode !== "files";
       if (mode === "trash") return renderTrash();
       const items = visible();
@@ -598,6 +599,7 @@ const FilesApp = (() => {
 
     function renderSelbar() {
       const sel = selectedEntries();
+      el.querySelector('[data-act="del"]').disabled = !sel.length;
       selbar.hidden = !sel.length || (!mobile && sel.length < 2 && !selecting);
       if (selbar.hidden) return;
       selbar.replaceChildren(h("span", "fm-selcount", `已選 ${sel.length} 項`));
@@ -876,7 +878,7 @@ const FilesApp = (() => {
           myClip() && e.dir && !many && { label: `貼上到「${e.name}」`, run: () => transfer(clipboard.mode === "cut" ? "move" : "copy", clipboard, { root, path: join(path, e.name) }).then((r) => r && clipboard?.mode === "cut" && (clipboard = null)) },
           !many && { label: "重新命名", run: () => rename(e), hint: "F2" },
           !many && { label: "內容", run: () => info(e) },
-          !base && !sel.some((x) => x.dir) && { label: "傳送到其他機器…", run: () => sendTo(sel.length ? sel : [e]) },
+          !(sel.length ? sel : [e]).some((x) => x.dir) && { label: "傳送到其他機器…", run: () => sendTo(sel.length ? sel : [e]) },
           "-",
           { label: many ? `刪除 ${sel.length} 項` : "刪除", run: trashSelected, danger: true, hint: "Del" },
         ],
@@ -911,15 +913,16 @@ const FilesApp = (() => {
       } catch {
         return toast("無法讀取 cluster", false);
       }
-      const nodes = (s.nodes || []).filter((n) => !n.me && n.online && !n.stale);
+      // 看別台的檔案時: 由那台傳送, 可以傳到這台或其他台
+      const nodes = (s.nodes || []).filter((n) => (base ? n.name !== node : !n.me) && (n.me || (n.online && !n.stale)));
       if (!s.connected || !nodes.length) return toast("cluster 沒有其他上線的機器", false);
       menu(
         nodes.map((n) => ({
-          label: `傳到 ${n.name}`,
+          label: `傳到 ${n.name}${n.me ? "(這台)" : ""}`,
           run: async () => {
             toast(`傳送中… ${sel.length} 個檔案到 ${n.name}`);
             try {
-              const r = await post("/api/cluster/send", { node: n.name, root, paths: sel.map((x) => join(path, x.name)) });
+              const r = await post(`${base}/api/cluster/send`, { node: n.name, root, paths: sel.map((x) => join(path, x.name)) });
               report(r);
             } catch (err) {
               toast(err.message, false);
@@ -1289,6 +1292,7 @@ const FilesApp = (() => {
     el.querySelector('[data-act="up"]').addEventListener("click", () => mode === "files" && path && go(root, parentOf(path)));
     el.querySelector('[data-act="mkdir"]').addEventListener("click", mkdir);
     el.querySelector('[data-act="newfile"]').addEventListener("click", newFile);
+    el.querySelector('[data-act="del"]').addEventListener("click", () => trashSelected());
     pasteBtn.addEventListener("click", paste);
     el.querySelector('[data-act="more"]').addEventListener("click", (e) => {
       const r = e.currentTarget.getBoundingClientRect();

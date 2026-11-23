@@ -49,3 +49,6 @@ web_key.pem
 
 # 照片(使用者自己的檔案)
 /photos/
+
+# cluster 同步的狀態(執行時產生)
+/cluster-sync.json

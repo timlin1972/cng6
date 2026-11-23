@@ -44,7 +44,7 @@ fn allowed(path: &str) -> bool {
     ["/api/", "/files/", "/books/", "/music/", "/wallpapers/"]
         .iter()
         .any(|p| path.starts_with(p))
-        && !path.starts_with("/api/cluster")
+        && (!path.starts_with("/api/cluster") || path == "/api/cluster/send")
 }
 
 /// 要轉送的 header(其他的不需要)
@@ -382,6 +382,9 @@ impl Bus {
                 let Some(inc) = serving.get_mut(&key) else {
                     return;
                 };
+                if h.seq < inc.next {
+                    return; // 重複收到(MQTT 重送), 略過
+                }
                 if h.seq != inc.next {
                     // 少了一段: 中止, 不要產生壞掉的檔案
                     let _ = inc.tx.send(Err(io::Error::other("傳輸中斷(資料不完整)")));
@@ -617,6 +620,8 @@ fn response_stream(
             };
             match p.kind {
                 Kind::Ack => {}
+                // 重複收到(MQTT 重送), 略過
+                Kind::Rbody | Kind::Res { .. } if p.seq < expect => {}
                 Kind::Err { msg } => {
                     guard.done = true;
                     let _ = tx.send(Err(io::Error::other(msg))).await;
@@ -676,6 +681,8 @@ mod tests {
         assert!(allowed("/api/cli"));
         assert!(allowed("/wallpapers/a.jpg"));
         assert!(!allowed("/api/cluster/node/x/api/cli"));
+        assert!(allowed("/api/cluster/send"));
+        assert!(!allowed("/api/cluster/clip"));
         assert!(!allowed("/"));
         assert!(!allowed("/api"));
     }
