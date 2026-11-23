@@ -108,6 +108,7 @@ const BooksApp = (() => {
           <header class="bk-lib-head">
             <h2>書庫</h2>
             <input type="search" class="bk-search" placeholder="搜尋書名、作者" spellcheck="false">
+            <button class="bk-btn" data-act="haodoo" title="從好讀(haodoo.net)搜尋、下載 EPUB">好讀…</button>
             <label class="bk-btn">上傳…<input type="file" hidden multiple accept=".epub,.mobi,.azw,.azw3,.txt,.pdf,.cbz,.zip"></label>
           </header>
           <div class="bk-lib-body"></div>
@@ -134,6 +135,7 @@ const BooksApp = (() => {
         load();
       });
       search.addEventListener("input", render);
+      el.querySelector('[data-act="haodoo"]').addEventListener("click", showHaodoo);
 
       function card(b) {
         const c = h("div", "bk-book");
@@ -198,6 +200,156 @@ const BooksApp = (() => {
       load();
     }
 
+    // ================================================================ 好讀
+    // Pi 抓好讀各分類的書單做成索引(第一次要等一下), 在這裡搜尋; 點書看各冊, 下載 EPUB 到書庫
+    let haodooIndex = null;
+    async function showHaodoo() {
+      if (stopReader) stopReader();
+      stopReader = null;
+      el.innerHTML = `
+        <div class="bk-lib">
+          <header class="bk-lib-head">
+            <button class="bk-ib" data-act="back" title="回書庫">${ICON.back}</button>
+            <h2>好讀</h2>
+            <input type="search" class="bk-search" placeholder="搜尋好讀的書名、作者" spellcheck="false">
+            <button class="bk-btn" data-act="refresh" title="重新抓好讀的書單">更新書單</button>
+          </header>
+          <div class="bk-hd-cats"></div>
+          <div class="bk-lib-body"></div>
+        </div>`;
+      const body = el.querySelector(".bk-lib-body");
+      const search = el.querySelector(".bk-search");
+      const cats = el.querySelector(".bk-hd-cats");
+      let cat = "";
+      let mine = new Set(); // 書庫裡已有的書名
+      const LIMIT = 300;
+
+      el.querySelector('[data-act="back"]').addEventListener("click", showLibrary);
+      el.querySelector('[data-act="refresh"]').addEventListener("click", () => load(true));
+      search.addEventListener("input", render);
+      setTimeout(() => search.focus(), 50);
+
+      const norm = (t) => (t || "").replace(/[\s【】《》()（）]/g, "").toLowerCase();
+
+      function renderCats() {
+        cats.replaceChildren();
+        [["", "全部"], ...haodooIndex.categories].forEach(([k, name]) => {
+          const b = h("button", `bk-chip ${k === cat ? "on" : ""}`, name);
+          b.addEventListener("click", () => {
+            cat = k;
+            renderCats();
+            render();
+          });
+          cats.append(b);
+        });
+      }
+
+      function render() {
+        if (!haodooIndex) return;
+        const q = search.value.trim().toLowerCase();
+        const shown = haodooIndex.books.filter((b) => (!cat || b.category === cat) && (!q || b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q)));
+        body.replaceChildren();
+        const list = h("div", "bk-hd-list");
+        shown.slice(0, LIMIT).forEach((b) => list.append(item(b)));
+        body.append(list);
+        if (!shown.length) body.append(h("div", "bk-empty", q ? `好讀找不到「${search.value}」` : "沒有書"));
+        else if (shown.length > LIMIT) body.append(h("div", "bk-empty", `還有 ${shown.length - LIMIT} 本, 請輸入書名或作者縮小範圍`));
+      }
+
+      function item(b) {
+        const row = h("div", "bk-hd-item");
+        const head = h("button", "bk-hd-head");
+        const catName = haodooIndex.categories.find(([k]) => k === b.category)?.[1] || "";
+        head.append(h("span", "bk-hd-title", b.title), h("span", "bk-hd-sub", [b.author, catName].filter(Boolean).join(" · ")));
+        if (mine.has(norm(b.title))) head.append(h("span", "bk-hd-have", "已在書庫"));
+        let vols = null;
+        head.addEventListener("click", async () => {
+          if (vols) {
+            vols.remove();
+            vols = null;
+            row.classList.remove("open");
+            return;
+          }
+          row.classList.add("open");
+          vols = h("div", "bk-hd-vols", "讀取中…");
+          row.append(vols);
+          const box = vols;
+          let list;
+          try {
+            const r = await fetch(`/api/books/haodoo/${enc(b.m)}/${enc(b.id)}`);
+            if (!r.ok) throw new Error(await r.text());
+            list = await r.json();
+          } catch (e) {
+            box.textContent = `無法讀取: ${e.message}`;
+            return;
+          }
+          box.replaceChildren();
+          if (!list.length) box.append(h("div", "bk-hd-none", "這本書在好讀沒有 EPUB 檔"));
+          list.forEach((v) => box.append(volume(v, b)));
+        });
+        row.append(head);
+        return row;
+      }
+
+      function volume(v, b) {
+        const r = h("div", "bk-hd-vol");
+        const title = v.title || b.title;
+        r.append(h("span", "bk-hd-vol-title", title));
+        if (mine.has(norm(title))) r.append(h("span", "bk-hd-have", "已在書庫"));
+        const add = (code, label, vertical) => {
+          if (!code) return;
+          const btn = h("button", "bk-btn", label);
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            btn.textContent = "下載中…";
+            try {
+              const res = await fetch("/api/books/haodoo/download", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code, title, vertical }),
+              });
+              if (!res.ok) throw new Error(await res.text());
+              const { name } = await res.json();
+              btn.textContent = "已下載 ✓";
+              mine.add(norm(title));
+              toast(`已加入書庫: ${name}`);
+            } catch (e) {
+              btn.disabled = false;
+              btn.textContent = label;
+              toast(`${title}: ${e.message}`, false);
+            }
+          });
+          r.append(btn);
+        };
+        add(v.epub, "下載", false);
+        add(v.vepub, "直排版", true);
+        return r;
+      }
+
+      async function load(refresh = false) {
+        body.replaceChildren(h("div", "bk-empty", refresh || !haodooIndex ? "正在抓好讀的書單, 第一次大約要半分鐘…" : "讀取中…"));
+        try {
+          const lib = await fetch("/api/books", { cache: "no-store" }).then((r) => r.json());
+          mine = new Set(lib.books.map((b) => norm(b.title)));
+        } catch {
+          /* 略過 */
+        }
+        if (refresh || !haodooIndex) {
+          try {
+            const r = await fetch(`/api/books/haodoo${refresh ? "?refresh=1" : ""}`, { cache: "no-store" });
+            if (!r.ok) throw new Error(await r.text());
+            haodooIndex = await r.json();
+          } catch (e) {
+            body.replaceChildren(h("div", "bk-empty", `無法讀取好讀書單: ${e.message}`));
+            return;
+          }
+        }
+        renderCats();
+        render();
+      }
+      load();
+    }
+
     // ================================================================ 閱讀器
     async function openBook(b) {
       let d;
@@ -252,6 +404,10 @@ const BooksApp = (() => {
         progress.chapter = p.chapter;
         progress.pos = p.pos;
         progress.percent = p.percent;
+        // 直排(由右往左翻)的書, 進度條也由右往左, 章節名和百分比左右對調
+        const rtl = !!view.vertical?.();
+        slider.dir = rtl ? "rtl" : "ltr";
+        slider.parentElement.classList.toggle("rtl", rtl);
         if (!slider.matches(":active")) slider.value = Math.round(p.percent * 1000);
         percentEl.textContent = `${Math.round(p.percent * 100)}%`;
         chapterEl.textContent = p.label || "";

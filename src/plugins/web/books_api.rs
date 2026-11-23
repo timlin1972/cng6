@@ -9,6 +9,9 @@
 //! - `GET  /books/file/{file}`         → 原始檔(PDF, 支援 Range)
 //! - `GET  /books/cover/{file}`        → 封面
 //! - `PUT  /api/books/upload/{name}`   → 上傳
+//! - `GET  /api/books/haodoo`          → 好讀書單索引(`?refresh=1` 重抓)
+//! - `GET  /api/books/haodoo/{m}/{id}` → 好讀書頁上的各冊
+//! - `POST /api/books/haodoo/download` → 從好讀下載一冊 EPUB 到書庫
 //! - `GET  /books/fonts/{name}.css`    → 閱讀用字型(明體、楷體), Pi 代抓 Google Fonts 並快取
 //! - `GET  /books/fonts/f/{*path}`     → 字型分片(woff2)
 //!
@@ -28,7 +31,7 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use super::server::Peer;
-use crate::plugins::books::Shared;
+use crate::plugins::books::{Shared, haodoo};
 use crate::plugins::books::library::{self, Book, Content, Kind, Library, Progress};
 
 /// 上傳大小上限
@@ -349,6 +352,64 @@ pub async fn upload(
         body.len() / 1024
     ));
     Json(Uploaded { name: final_name }).into_response()
+}
+
+// ---------------------------------------------------------------- 好讀
+
+#[derive(Deserialize)]
+pub struct HaodooQuery {
+    #[serde(default)]
+    refresh: Option<String>,
+}
+
+fn bad_gateway(e: String) -> Response {
+    (StatusCode::BAD_GATEWAY, e).into_response()
+}
+
+pub async fn haodoo_index(State(st): State<BooksState>, Query(q): Query<HaodooQuery>) -> Response {
+    let dir = st.shared.dir();
+    let refresh = q.refresh.is_some_and(|r| r == "1");
+    match blocking(move || haodoo::index(&dir, refresh)).await {
+        Some(Ok(idx)) => ([(header::CACHE_CONTROL, "no-store")], Json(idx)).into_response(),
+        Some(Err(e)) => bad_gateway(e),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+pub async fn haodoo_volumes(Path((m, id)): Path<(String, String)>) -> Response {
+    match blocking(move || haodoo::volumes(&m, &id)).await {
+        Some(Ok(v)) => Json(v).into_response(),
+        Some(Err(e)) => bad_gateway(e),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct HaodooDownload {
+    code: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    vertical: bool,
+}
+
+pub async fn haodoo_download(
+    State(st): State<BooksState>,
+    Extension(Peer(peer)): Extension<Peer>,
+    Json(req): Json<HaodooDownload>,
+) -> Response {
+    let dir = st.shared.dir();
+    let res = blocking(move || haodoo::download(&dir, &req.code, &req.title, req.vertical)).await;
+    match res {
+        Some(Ok(name)) => {
+            let _ = st
+                .log
+                .send(format!("web {}: 從好讀下載 {name}", peer.ip()));
+            Json(Uploaded { name }).into_response()
+        }
+        Some(Err(e)) => bad_gateway(e),
+        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 // ---------------------------------------------------------------- 閱讀用字型

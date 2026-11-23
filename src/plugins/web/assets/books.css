@@ -81,6 +81,108 @@
   font-size: 13px;
 }
 
+/* ================= 好讀 ================= */
+.bk-hd-cats {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 10px;
+}
+
+.bk-chip {
+  padding: 4px 12px;
+  border: 1px solid var(--bk-line);
+  border-radius: 999px;
+  background: var(--bk-card);
+  font-size: 13px !important;
+}
+
+.bk-chip.on {
+  background: var(--bk-accent);
+  border-color: transparent;
+  color: #fff !important;
+}
+
+.bk-hd-list {
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: var(--bk-card);
+  overflow: hidden;
+}
+
+.bk-hd-item + .bk-hd-item {
+  border-top: 1px solid var(--bk-line);
+}
+
+.bk-hd-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.bk-hd-head:hover,
+.bk-hd-item.open .bk-hd-head {
+  background: var(--bk-hover);
+}
+
+.bk-hd-title {
+  font-weight: 600;
+}
+
+.bk-hd-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bk-text-2);
+  font-size: 12px;
+}
+
+.bk-hd-have {
+  flex: none;
+  margin-left: auto;
+  color: var(--bk-accent);
+  font-size: 12px;
+}
+
+.bk-hd-vols {
+  padding: 4px 14px 10px 28px;
+  color: var(--bk-text-2);
+  font-size: 13px;
+}
+
+.bk-hd-vol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--bk-text);
+}
+
+.bk-hd-vol-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.bk-hd-vol .bk-hd-have {
+  margin-left: 0;
+}
+
+.bk-hd-vol .bk-btn[disabled] {
+  opacity: 0.6;
+}
+
+.bk-hd-none {
+  padding: 6px 0;
+}
+
 /* ================= 書庫 ================= */
 .bk-lib {
   height: 100%;
@@ -396,6 +498,18 @@
   opacity: 0.75;
 }
 
+.bk-bar.bottom.rtl {
+  flex-direction: row-reverse;
+}
+
+.bk-bar.bottom.rtl .bk-chapter {
+  text-align: right;
+}
+
+.bk-bar.bottom.rtl .bk-percent {
+  text-align: left;
+}
+
 .bk-stage {
   flex: 1;
   min-height: 0;
@@ -700,6 +814,32 @@
 .bk-mobile .bk-lib-head .bk-btn {
   margin-left: auto;
   min-height: 38px;
+}
+
+.bk-mobile .bk-lib-head .bk-btn + .bk-btn {
+  margin-left: 0;
+}
+
+.bk-mobile .bk-hd-cats {
+  padding: 0 14px 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.bk-mobile .bk-chip {
+  flex: none;
+  min-height: 32px;
+}
+
+.bk-mobile .bk-hd-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-height: 48px;
+}
+
+.bk-mobile .bk-hd-vol .bk-btn {
+  min-height: 36px;
 }
 
 .bk-mobile .bk-lib-body {

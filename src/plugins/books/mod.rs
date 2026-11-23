@@ -2,8 +2,10 @@
 //!
 //! 支援 EPUB、MOBI / AZW / AZW3(用 Calibre 轉成 EPUB)、TXT、PDF、CBZ / ZIP 漫畫。
 //! 書放在 `books.dir`(預設 books/), 閱讀進度與書籤存在書庫裡, 各裝置同步。
+//! 網頁上可以從好讀(haodoo.net)搜尋並下載 EPUB(見 haodoo.rs)。
 
 pub mod epub;
+pub mod haodoo;
 pub mod library;
 pub mod txt;
 
