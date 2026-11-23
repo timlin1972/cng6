@@ -11,7 +11,8 @@
 #   @reboot /home/timlin/cng6/utils/cng6.sh start
 #
 # run 迴圈:
-# - 每次啟動前先編譯; 編譯失敗時繼續執行上一次成功編譯的版本, 服務不會因為程式碼改壞而停掉
+# - 每次啟動前先從目前分支的 upstream 快轉更新, 再編譯
+# - 更新或編譯失敗時繼續執行上一次成功編譯的版本
 # - cng6 結束碼 3 (restart 指令): 重新編譯並啟動
 # - 結束碼 0 (quit): 結束迴圈, tmux session 也跟著關閉
 # - 其他(當掉): 等 3 秒再重新啟動, 避免一直重啟吃滿 CPU
@@ -45,11 +46,29 @@ build() {
     return 1
 }
 
+update() {
+    echo "[cng6] 從 Git 更新程式碼…"
+    if git -C "$ROOT" pull --ff-only; then
+        return 0
+    fi
+    echo "[cng6] Git 更新失敗, 繼續使用本機程式碼"
+    return 1
+}
+
 run_loop() {
     while true; do
         cd "$ROOT" || exit 1
-        if ! build; then
+        updated=0
+        if update; then
+            updated=1
+        fi
+        if [ "$updated" -eq 1 ] && ! build; then
             echo "[cng6] 編譯失敗而且沒有可執行的版本, 30 秒後重試 (Ctrl-C 結束)"
+            sleep 30
+            continue
+        fi
+        if [ ! -x "$BIN" ]; then
+            echo "[cng6] 沒有可執行的版本, 30 秒後重試 (Ctrl-C 結束)"
             sleep 30
             continue
         fi
