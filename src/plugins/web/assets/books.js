@@ -1,8 +1,8 @@
 // cng6 電子書: 書庫與閱讀器(PC 視窗與手機共用)
 //
 // - EPUB / MOBI / TXT: 章節在 iframe(禁止 script)裡顯示, 由這裡注入閱讀設定
-//   翻頁: 橫排用 CSS 分欄、直排(vertical-rl)直接左右捲動; 捲動: 原生捲動
-// - 漫畫: 一頁一張圖; PDF: pdf.js(見 PdfView)
+//   翻頁: 橫排用 CSS 分欄、直排(vertical-rl)依每一行的位置分頁
+// - 漫畫: 一頁一張圖; PDF: pdf.js, 一次一頁(見 PdfView)
 // - 閱讀進度與書籤存在 Pi 上(/api/books/{file}/progress), 各裝置同步
 "use strict";
 
@@ -28,9 +28,11 @@ const BooksApp = (() => {
   // ---- 閱讀設定(每台裝置各自記住) ----
   const PREF_KEY = "cng6.books.prefs";
   function loadPrefs(mobile) {
-    const def = { size: mobile ? 19 : 20, line: 1.8, font: "serif", theme: "auto", mode: "paged" };
+    const def = { size: mobile ? 19 : 20, line: 1.8, font: "serif", theme: "auto" };
     try {
-      return { ...def, ...JSON.parse(localStorage.getItem(PREF_KEY)) };
+      const p = { ...def, ...JSON.parse(localStorage.getItem(PREF_KEY)) };
+      delete p.mode; // 以前的「閱讀方式」設定(已經只有翻頁)
+      return p;
     } catch {
       return def;
     }
@@ -442,6 +444,21 @@ const BooksApp = (() => {
       function closePanel() {
         panel.hidden = true;
       }
+      // 手機: 全螢幕閱讀, 工具列平常收起來, 點畫面中間叫出 / 收起
+      if (mobile) {
+        document.body.classList.add("bk-reading");
+        reader.classList.add("immersive");
+      }
+      const setBars = (on) => reader.classList.toggle("bars-on", on);
+      function middleTap() {
+        if (!panel.hidden) return closePanel();
+        if (mobile) setBars(!reader.classList.contains("bars-on"));
+      }
+      /** 從面板跳到別的地方: 關面板, 手機也收起工具列 */
+      function jumped() {
+        closePanel();
+        if (mobile) setBars(false);
+      }
       function renderToc() {
         panel.append(h("h3", null, "目錄"));
         const list = h("div", "bk-list");
@@ -451,7 +468,7 @@ const BooksApp = (() => {
           const b = h("button", `bk-toc-item ${t.chapter === cur ? "on" : ""}`, t.title || "(無標題)");
           b.style.paddingLeft = `${12 + t.level * 16}px`;
           b.addEventListener("click", () => {
-            closePanel();
+            jumped();
             view.go(t.chapter, 0, t.anchor);
           });
           list.append(b);
@@ -481,7 +498,7 @@ const BooksApp = (() => {
             const go = h("button", "bk-mark-go");
             go.append(h("b", null, m.label), h("span", null, `${Math.round(m.percent * 100)}% · ${new Date(m.created * 1000).toLocaleDateString("zh-TW")}`));
             go.addEventListener("click", () => {
-              closePanel();
+              jumped();
               view.go(m.chapter, m.pos);
             });
             const del = h("button", "bk-mark-del", "×");
@@ -551,7 +568,6 @@ const BooksApp = (() => {
           );
         }
         row("主題", seg([["auto", "跟系統"], ["white", "白"], ["sepia", "米黃"], ["dark", "深色"]], prefs.theme, (v) => (prefs.theme = v)));
-        row("閱讀方式", seg([["paged", "翻頁"], ["scroll", "捲動"]], prefs.mode, (v) => (prefs.mode = v)));
       }
 
       reader.querySelector('[data-act="back"]').addEventListener("click", () => {
@@ -582,7 +598,7 @@ const BooksApp = (() => {
       el.addEventListener("keydown", onKey);
       setTimeout(() => el.focus(), 50);
 
-      const ctx = { d, stage, prefs, onMove, chapterTitles, closePanel, toast, mobile, keydown: onKey };
+      const ctx = { d, stage, prefs, onMove, chapterTitles, closePanel, middleTap, toast, mobile, keydown: onKey };
       if (d.kind === "epub" || d.kind === "txt") view = TextView(ctx);
       else if (d.kind === "comic") view = ComicView(ctx);
       else view = PdfView(ctx);
@@ -604,6 +620,7 @@ const BooksApp = (() => {
         window.removeEventListener("cng6-theme", onTheme);
         document.removeEventListener("visibilitychange", onHide);
         el.removeEventListener("keydown", onKey);
+        document.body.classList.remove("bk-reading");
       };
     }
 
@@ -663,7 +680,7 @@ const BooksApp = (() => {
     let frame = null;
     let vertical = false;
     let bookVertical = false; // 書本身的 CSS 是直排
-    let page = 0; // 翻頁模式: 目前第幾頁
+    let page = 0; // 目前第幾頁
     let pages = 1;
     let starts = [0]; // 直排翻頁: 每一頁從哪裡開始(離最右邊的距離)
     let loading = false;
@@ -673,7 +690,7 @@ const BooksApp = (() => {
         ? `/books/txt/${encodeURIComponent(d.file)}/${i}`
         : `/books/res/${encodeURIComponent(d.file)}/${encPath(d.chapters[i])}${asHtml ? "?as=html" : ""}`;
 
-    // 點左右兩側翻頁在章節裡處理(見 hook), 不另外蓋一層, 才不會擋到捲動與選取文字
+    // 點左右兩側翻頁在章節裡處理(見 hook), 不另外蓋一層, 才不會擋到選取文字
     stage.classList.add("bk-text");
 
     function docOf() {
@@ -693,7 +710,6 @@ const BooksApp = (() => {
       const H = stage.clientHeight;
       const padX = mobile ? 20 : Math.max(40, Math.round(W * 0.07));
       const padY = mobile ? 24 : 36;
-      const paged = prefs.mode === "paged";
       const font = prefs.font === "book" ? "" : `font-family: ${FONTS[prefs.font]} !important;`;
       // 直排: 使用者指定 > 書的 CSS > 由右往左翻的書(很多書只寫 -epub-writing-mode, 瀏覽器不認得)
       const flow = prefs.flows?.[d.file] || "auto";
@@ -713,24 +729,20 @@ const BooksApp = (() => {
         : flow === "h"
           ? `html, body, body * { writing-mode: horizontal-tb !important; }`
           : "";
-      if (paged) {
-        if (!vertical) {
-          // 橫排: 分欄, 一欄 = 一頁
-          css += `
-            html { height: ${H}px !important; overflow: hidden !important; }
-            body { height: ${H}px !important; column-width: ${W - padX * 2}px !important; column-gap: ${padX * 2}px !important;
-                   column-fill: auto !important; overflow: visible !important; }
-            img, svg { max-height: ${H - padY * 2}px !important; object-fit: contain; break-inside: avoid; }`;
-        } else {
-          // 直排: 左右留白放在 iframe 外面, 分頁由 measure() 依每一行的位置計算
-          css += `
-            html { height: ${H}px !important; overflow: hidden !important; }
-            body { height: ${H}px !important; padding-left: 0 !important; padding-right: 0 !important; }
-            p { margin-left: 0 !important; margin-right: 0 !important; }
-            img, svg { max-height: ${H - padY * 2}px !important; }`;
-        }
+      if (!vertical) {
+        // 橫排: 分欄, 一欄 = 一頁
+        css += `
+          html { height: ${H}px !important; overflow: hidden !important; }
+          body { height: ${H}px !important; column-width: ${W - padX * 2}px !important; column-gap: ${padX * 2}px !important;
+                 column-fill: auto !important; overflow: visible !important; }
+          img, svg { max-height: ${H - padY * 2}px !important; object-fit: contain; break-inside: avoid; }`;
       } else {
-        css += `html { overflow: auto !important; }`;
+        // 直排: 左右留白放在 iframe 外面, 分頁由 measure() 依每一行的位置計算
+        css += `
+          html { height: ${H}px !important; overflow: hidden !important; }
+          body { height: ${H}px !important; padding-left: 0 !important; padding-right: 0 !important; }
+          p { margin-left: 0 !important; margin-right: 0 !important; }
+          img, svg { max-height: ${H - padY * 2}px !important; }`;
       }
       let style = doc.getElementById("cng6-reader");
       if (!style) {
@@ -747,7 +759,7 @@ const BooksApp = (() => {
         link.dataset.cng6Font = prefs.font;
         (doc.head || doc.documentElement).appendChild(link);
       }
-      if (paged && vertical) {
+      if (vertical) {
         frame.style.width = `${W - padX * 2}px`;
         frame.style.left = `${padX}px`;
       } else {
@@ -755,14 +767,12 @@ const BooksApp = (() => {
         frame.style.left = "";
         frame.style.clipPath = "";
       }
-      stage.classList.toggle("paged", paged);
       stage.classList.toggle("vertical", vertical);
     }
 
     function measure() {
       const s = scroller();
       if (!s) return;
-      if (prefs.mode !== "paged") return;
       if (!vertical) {
         pages = Math.max(1, Math.ceil(s.scrollWidth / pageStep() - 0.02));
         return;
@@ -857,51 +867,28 @@ const BooksApp = (() => {
     }
 
     function setPos(pos) {
-      const s = scroller();
-      if (!s) return;
-      if (prefs.mode === "paged") {
-        showPage(Math.round(pos * (pages - 1)));
-      } else if (vertical) {
-        const max = s.scrollWidth - s.clientWidth;
-        s.scrollLeft = -pos * max;
-        onMove();
-      } else {
-        s.scrollTop = pos * (s.scrollHeight - s.clientHeight);
-        onMove();
-      }
+      if (!scroller()) return;
+      showPage(Math.round(pos * (pages - 1)));
     }
 
     function gotoElement(el) {
       const s = scroller();
-      if (prefs.mode === "paged") {
-        const r = el.getBoundingClientRect();
-        if (vertical) {
-          const x = -s.scrollLeft + (pageStep() - r.right);
-          let p = 0;
-          while (p + 1 < starts.length && starts[p + 1] <= x + 1) p++;
-          showPage(p);
-        } else {
-          showPage(Math.floor((s.scrollLeft + r.left) / pageStep()));
-        }
+      const r = el.getBoundingClientRect();
+      if (vertical) {
+        const x = -s.scrollLeft + (pageStep() - r.right);
+        let p = 0;
+        while (p + 1 < starts.length && starts[p + 1] <= x + 1) p++;
+        showPage(p);
       } else {
-        el.scrollIntoView({ block: "start", inline: "start" });
-        onMove();
+        showPage(Math.floor((s.scrollLeft + r.left) / pageStep()));
       }
     }
 
     function fraction() {
-      const s = scroller();
-      if (!s) return 0;
-      if (prefs.mode === "paged") return pages > 1 ? page / (pages - 1) : 0;
-      if (vertical) {
-        const max = s.scrollWidth - s.clientWidth;
-        return max > 0 ? Math.min(1, -s.scrollLeft / max) : 0;
-      }
-      const max = s.scrollHeight - s.clientHeight;
-      return max > 0 ? Math.min(1, s.scrollTop / max) : 0;
+      if (!scroller()) return 0;
+      return pages > 1 ? page / (pages - 1) : 0;
     }
 
-    /** 章節內的事件: 連結、捲動、手勢、鍵盤 */
     /** 排版改變(字型載入完成)後重新分頁, 保持目前位置 */
     let relayoutTimer = null;
     function relayout() {
@@ -941,29 +928,14 @@ const BooksApp = (() => {
           }
           return;
         }
+        // 點左右兩側翻頁, 點中間叫出 / 收起工具列
+        const x = e.clientX / pageStep();
+        if (x >= 0.3 && x <= 0.7) return ctx.middleTap();
         closePanel();
-        // 翻頁模式: 點左右兩側翻頁
-        if (prefs.mode === "paged") {
-          const x = e.clientX / pageStep();
-          if (x < 0.3) vertical ? next() : prev();
-          else if (x > 0.7) vertical ? prev() : next();
-        }
+        if (x < 0.3) vertical ? next() : prev();
+        else vertical ? prev() : next();
       });
       doc.addEventListener("keydown", ctx.keydown);
-      doc.addEventListener("scroll", () => !loading && prefs.mode === "scroll" && onMove(), { passive: true });
-      // 捲動模式: 到底再往下 → 下一章
-      doc.addEventListener(
-        "wheel",
-        (e) => {
-          if (prefs.mode !== "scroll" || loading) return;
-          const s = scroller();
-          const atEnd = vertical ? -s.scrollLeft >= s.scrollWidth - s.clientWidth - 2 : s.scrollTop >= s.scrollHeight - s.clientHeight - 2;
-          const atStart = vertical ? s.scrollLeft >= -2 : s.scrollTop <= 2;
-          if (e.deltaY > 30 && atEnd) next();
-          else if (e.deltaY < -30 && atStart) prev();
-        },
-        { passive: true },
-      );
       // 手機: 左右滑動翻頁
       let sx = 0;
       let sy = 0;
@@ -971,7 +943,6 @@ const BooksApp = (() => {
       doc.addEventListener(
         "touchend",
         (e) => {
-          if (prefs.mode !== "paged") return;
           const dx = e.changedTouches[0].clientX - sx;
           const dy = e.changedTouches[0].clientY - sy;
           if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
@@ -986,30 +957,12 @@ const BooksApp = (() => {
 
     function next() {
       if (loading) return;
-      if (prefs.mode === "paged" && page < pages - 1) return showPage(page + 1);
-      if (prefs.mode === "scroll") {
-        const s = scroller();
-        const atEnd = vertical ? -s.scrollLeft >= s.scrollWidth - s.clientWidth - 2 : s.scrollTop >= s.scrollHeight - s.clientHeight - 2;
-        if (!atEnd) {
-          if (vertical) s.scrollBy({ left: -s.clientWidth * 0.9, behavior: "smooth" });
-          else s.scrollBy({ top: s.clientHeight * 0.9, behavior: "smooth" });
-          return;
-        }
-      }
+      if (page < pages - 1) return showPage(page + 1);
       if (chapter < n - 1) load(chapter + 1, 0);
     }
     function prev() {
       if (loading) return;
-      if (prefs.mode === "paged" && page > 0) return showPage(page - 1);
-      if (prefs.mode === "scroll") {
-        const s = scroller();
-        const atStart = vertical ? s.scrollLeft >= -2 : s.scrollTop <= 2;
-        if (!atStart) {
-          if (vertical) s.scrollBy({ left: s.clientWidth * 0.9, behavior: "smooth" });
-          else s.scrollBy({ top: -s.clientHeight * 0.9, behavior: "smooth" });
-          return;
-        }
-      }
+      if (page > 0) return showPage(page - 1);
       if (chapter > 0) load(chapter - 1, 1);
     }
 
@@ -1055,74 +1008,41 @@ const BooksApp = (() => {
   // ======================================================================
   function ComicView(ctx) {
     const { d, stage, onMove } = ctx;
-    let prefs = ctx.prefs;
     const n = d.pages;
     let page = 0;
     stage.classList.add("bk-comic");
     const url = (i) => `/books/page/${encodeURIComponent(d.file)}/${i}`;
     const img = h("img", "bk-comic-img");
     img.alt = "";
-    const strip = h("div", "bk-comic-strip");
-    stage.append(img, strip);
+    stage.append(img);
 
     function show(i) {
       page = Math.max(0, Math.min(i, n - 1));
-      if (prefs.mode === "paged") {
-        img.src = url(page);
-        // 預先載入下一頁
-        if (page + 1 < n) new Image().src = url(page + 1);
-      } else {
-        strip.children[page]?.scrollIntoView({ block: "start" });
-      }
+      img.src = url(page);
+      // 預先載入下一頁
+      if (page + 1 < n) new Image().src = url(page + 1);
       onMove();
     }
-    function layout() {
-      const paged = prefs.mode === "paged";
-      img.hidden = !paged;
-      strip.hidden = paged;
-      if (!paged && !strip.children.length) {
-        for (let i = 0; i < n; i++) {
-          const im = h("img");
-          im.loading = "lazy";
-          im.alt = "";
-          im.src = url(i);
-          im.dataset.i = i;
-          strip.append(im);
-        }
-        strip.addEventListener("scroll", () => {
-          const top = strip.scrollTop;
-          let cur = 0;
-          for (const im of strip.children) if (im.offsetTop - 10 <= top) cur = +im.dataset.i;
-          if (cur !== page) {
-            page = cur;
-            onMove();
-          }
-        });
-      }
-    }
     stage.addEventListener("click", (e) => {
-      if (prefs.mode !== "paged") return;
-      const x = e.offsetX / stage.clientWidth;
+      const r = stage.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width;
       if (x < 0.35) show(page - 1);
       else if (x > 0.65) show(page + 1);
+      else ctx.middleTap();
     });
     let sx = 0;
     stage.addEventListener("touchstart", (e) => (sx = e.touches[0].clientX), { passive: true });
     stage.addEventListener("touchend", (e) => {
-      if (prefs.mode !== "paged") return;
       const dx = e.changedTouches[0].clientX - sx;
       if (Math.abs(dx) > 50) show(page + (dx < 0 ? 1 : -1));
     });
-    layout();
     return {
       go: (i) => show(i),
       next: () => show(page + 1),
       prev: () => show(page - 1),
       seekPercent: (p) => show(Math.round(p * (n - 1))),
       position: () => ({ chapter: page, pos: 0, percent: n > 1 ? page / (n - 1) : 1, label: `第 ${page + 1} / ${n} 頁` }),
-      apply(p) {
-        prefs = p;
-        layout();
+      apply() {
         show(page);
       },
       stop() {},
@@ -1170,23 +1090,20 @@ const BooksApp = (() => {
 
   function PdfView(ctx) {
     const { d, stage, onMove } = ctx;
-    let prefs = ctx.prefs;
     let pdf = null;
     let n = 0;
     let page = 0;
-    let pos = 0; // 捲動模式: 在這一頁的哪裡
     let target = null; // 還沒載入完成前要去的位置
     let stopped = false;
     stage.classList.add("bk-pdf");
     const paper = h("div", "bk-pdf-paper");
     const canvas = h("canvas");
     paper.append(canvas);
-    const strip = h("div", "bk-pdf-strip");
     const status = h("div", "bk-empty", "PDF 載入中…");
-    stage.append(paper, strip, status);
+    stage.append(paper, status);
     const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
 
-    // ---- 翻頁: 一次一頁, 整頁放進畫面 ----
+    // 一次一頁, 整頁放進畫面
     let task = null;
     let drawSeq = 0;
     async function drawPaged() {
@@ -1219,116 +1136,13 @@ const BooksApp = (() => {
       if (page + 1 < n) pdf.getPage(page + 2).catch(() => {});
     }
 
-    // ---- 捲動: 每頁一個格子, 看得到的才畫 ----
-    let io = null;
-    let ratio = 1.414; // 第一頁的高寬比, 還沒量到的頁先用這個
-    const drawn = new Map(); // 頁 → render task
-    function buildStrip() {
-      strip.replaceChildren();
-      io?.disconnect();
-      drawn.forEach((t) => t?.cancel());
-      drawn.clear();
-      const w = stripWidth();
-      for (let i = 0; i < n; i++) {
-        const box = h("div", "bk-pdf-box");
-        box.dataset.i = i;
-        box.style.width = `${w}px`;
-        box.style.height = `${Math.round(w * ratio)}px`;
-        strip.append(box);
-      }
-      io = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) {
-            const i = +e.target.dataset.i;
-            if (e.isIntersecting) drawBox(i, e.target);
-            else if (drawn.has(i)) {
-              // 離開畫面很遠的頁面釋放記憶體
-              drawn.get(i)?.cancel();
-              drawn.delete(i);
-              e.target.replaceChildren();
-            }
-          }
-        },
-        { root: strip, rootMargin: "150% 0px" }
-      );
-      for (const b of strip.children) io.observe(b);
-    }
-    function stripWidth() {
-      const pad = ctx.mobile ? 0 : 32;
-      return Math.min(stage.clientWidth - pad, ctx.mobile ? 4000 : 1100);
-    }
-    async function drawBox(i, box) {
-      if (drawn.has(i)) return;
-      drawn.set(i, null);
-      const p = await pdf.getPage(i + 1);
-      if (!drawn.has(i) || stopped) return;
-      const base = p.getViewport({ scale: 1 });
-      const w = stripWidth();
-      const scale = w / base.width;
-      const hgt = Math.round(base.height * scale);
-      if (Math.abs(box.offsetHeight - hgt) > 1) {
-        // 這一頁的大小和預設不同: 調整格子, 並保持目前看到的位置
-        const above = box.offsetTop < strip.scrollTop;
-        const diff = hgt - box.offsetHeight;
-        box.style.height = `${hgt}px`;
-        if (above) strip.scrollTop += diff;
-      }
-      const vp = p.getViewport({ scale: scale * dpr() });
-      const c = h("canvas");
-      c.width = Math.floor(vp.width);
-      c.height = Math.floor(vp.height);
-      const t = p.render({ canvas: c, viewport: vp });
-      drawn.set(i, t);
-      try {
-        await t.promise;
-      } catch {
-        return;
-      }
-      if (drawn.get(i) === t) box.replaceChildren(c);
-    }
-    function scrollTo(i, f = 0) {
-      const box = strip.children[i];
-      if (!box) return;
-      strip.scrollTop = box.offsetTop + f * box.offsetHeight - 8;
-    }
-    strip.addEventListener(
-      "scroll",
-      () => {
-        if (prefs.mode !== "scroll" || !n) return;
-        const top = strip.scrollTop + 8;
-        let cur = page;
-        // 找出畫面頂端是哪一頁(格子高度差不多, 先猜再修正)
-        const boxes = strip.children;
-        while (cur > 0 && boxes[cur].offsetTop > top) cur--;
-        while (cur + 1 < n && boxes[cur + 1].offsetTop <= top) cur++;
-        page = cur;
-        pos = Math.max(0, Math.min(1, (top - boxes[cur].offsetTop) / boxes[cur].offsetHeight));
-        onMove();
-      },
-      { passive: true }
-    );
-
-    function layout() {
-      const paged = prefs.mode === "paged";
-      paper.hidden = !paged;
-      strip.hidden = paged;
-      if (!pdf) return;
-      if (paged) drawPaged();
-      else {
-        buildStrip();
-        scrollTo(page, pos);
-      }
-    }
-
-    function show(i, f = 0) {
+    function show(i) {
       if (!pdf) {
-        target = [i, f];
+        target = i;
         return;
       }
       page = Math.max(0, Math.min(i, n - 1));
-      pos = f;
-      if (prefs.mode === "paged") drawPaged();
-      else scrollTo(page, f);
+      drawPaged();
       onMove();
     }
 
@@ -1336,9 +1150,10 @@ const BooksApp = (() => {
     paper.addEventListener("click", (e) => {
       const r = stage.getBoundingClientRect();
       const x = (e.clientX - r.left) / r.width;
+      if (x >= 0.35 && x <= 0.65) return ctx.middleTap();
       ctx.closePanel();
       if (x < 0.35) show(page - 1);
-      else if (x > 0.65) show(page + 1);
+      else show(page + 1);
     });
     let sx = 0;
     paper.addEventListener("touchstart", (e) => (sx = e.touches[0].clientX), { passive: true });
@@ -1360,18 +1175,11 @@ const BooksApp = (() => {
     const ro = new ResizeObserver(() => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (!pdf) return;
-        if (prefs.mode === "paged") drawPaged();
-        else {
-          const [p0, f0] = [page, pos];
-          buildStrip();
-          scrollTo(p0, f0);
-        }
+        if (pdf) drawPaged();
       }, 150);
     });
     ro.observe(stage);
 
-    layout();
     loadPdfjs()
       .then((lib) =>
         lib.getDocument({
@@ -1383,19 +1191,15 @@ const BooksApp = (() => {
           isEvalSupported: false,
         }).promise
       )
-      .then(async (doc) => {
+      .then((doc) => {
         if (stopped) return doc.destroy();
         pdf = doc;
         n = doc.numPages;
         d.pages = n;
-        const first = await doc.getPage(1);
-        const vp = first.getViewport({ scale: 1 });
-        ratio = vp.height / vp.width;
         status.remove();
-        layout();
-        const [i, f] = target || [0, 0];
+        const i = target ?? 0;
         target = null;
-        show(i, f);
+        show(i);
         pdfOutline(doc)
           .then((t) => (d.pdfToc = t))
           .catch(() => {});
@@ -1405,29 +1209,21 @@ const BooksApp = (() => {
       });
 
     return {
-      go: (i, f = 0) => show(i, f),
-      next: () => (prefs.mode === "paged" ? show(page + 1) : strip.scrollBy({ top: strip.clientHeight * 0.9, behavior: "smooth" })),
-      prev: () => (prefs.mode === "paged" ? show(page - 1) : strip.scrollBy({ top: -strip.clientHeight * 0.9, behavior: "smooth" })),
-      seekPercent: (p) => {
-        const x = p * n;
-        const i = Math.min(n - 1, Math.floor(x));
-        show(i, prefs.mode === "paged" ? 0 : x - i);
-      },
+      go: (i) => show(i),
+      next: () => show(page + 1),
+      prev: () => show(page - 1),
+      seekPercent: (p) => show(Math.min(n - 1, Math.floor(p * n))),
       position() {
-        if (!n) return { chapter: page, pos, percent: 0, label: "" };
-        const percent = prefs.mode === "paged" ? (n > 1 ? page / (n - 1) : 1) : Math.min(1, (page + pos) / n);
-        return { chapter: page, pos: prefs.mode === "paged" ? 0 : pos, percent, label: `第 ${page + 1} / ${n} 頁` };
+        if (!n) return { chapter: page, pos: 0, percent: 0, label: "" };
+        return { chapter: page, pos: 0, percent: n > 1 ? page / (n - 1) : 1, label: `第 ${page + 1} / ${n} 頁` };
       },
-      apply(p) {
-        prefs = p;
-        layout();
+      apply() {
+        drawPaged();
       },
       stop() {
         stopped = true;
         ro.disconnect();
-        io?.disconnect();
         task?.cancel();
-        drawn.forEach((t) => t?.cancel());
         pdf?.destroy();
       },
     };
