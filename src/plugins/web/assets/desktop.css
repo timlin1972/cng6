@@ -441,6 +441,11 @@ html {
   }
 }
 
+/* 視窗內容自成一層: app 裡的覆蓋層(z-index)不會蓋到視窗的邊框把手 */
+.window .content {
+  isolation: isolate;
+}
+
 /* 改變大小的邊框把手 */
 .resize {
   position: absolute;

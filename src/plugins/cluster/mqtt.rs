@@ -346,12 +346,7 @@ async fn session(c: &Config, rx: &mut UnboundedReceiver<Cmd>, w: &mut Worker) ->
         opts.set_transport(Transport::tls_with_config(TlsConfiguration::Rustls(tls_config())));
     }
     let (client, mut eventloop) = AsyncClient::new(opts, 64);
-    let conn = Conn {
-        client: client.clone(),
-        cipher: cipher.clone(),
-        group: group.clone(),
-        me: c.name.clone(),
-    };
+    let conn = Conn::new(client.clone(), cipher.clone(), group.clone(), c.name.clone());
     let mut tick = tokio::time::interval(Duration::from_secs(c.interval.max(2)));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut sync_tick = tokio::time::interval(Duration::from_secs(5));

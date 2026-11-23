@@ -4,14 +4,16 @@
 //! 遠端 CLI、遠端檔案、檔案傳送、同步桌布圖片都走這裡。
 //!
 //! - 每一則訊息(加密前): `[4 bytes: header 長度][header JSON][資料]`, 送到收件者的收件匣
-//! - 大的內容切成 [`CHUNK`] 一段, 依序編號; 收到的順序不對就中止, 不會產生壞掉的檔案
-//! - 流量控制: 接收方每收到 [`ACK_EVERY`] 段回報一次, 送出方最多領先 [`WINDOW`] 段,
-//!   避免一次塞太多訊息給 broker
+//! - 大的內容切成 [`CHUNK`] 一段, 依序編號
+//! - 公開的 broker 有沒公開的流量限制, 送太快會被丟掉訊息, 所以:
+//!   - 送出方限速([`RATE`]), 最多領先 [`WINDOW`] 段還沒被確認
+//!   - 接收方每 [`ACK_EVERY`] 段回報一次; 發現少了一段就請對方從那段重送(Go-Back-N)
+//!   - 送出方太久沒收到回報也會重送; 重送多次還是不行才放棄
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
@@ -30,9 +32,15 @@ pub const CHUNK: usize = 128 * 1024;
 /// 單一請求或回應的大小上限
 pub const LIMIT: u64 = 100 * 1024 * 1024;
 /// 送出方最多領先幾段還沒被確認
-const WINDOW: u32 = 16;
+const WINDOW: u32 = 8;
 /// 接收方每幾段回報一次
-const ACK_EVERY: u32 = 4;
+const ACK_EVERY: u32 = 2;
+/// 送出的速度上限(bytes/秒)與一次最多送多少
+const RATE: f64 = 384.0 * 1024.0;
+const BURST: f64 = 256.0 * 1024.0;
+/// 多久沒收到回報就重送, 最多重送幾次
+const RESEND_AFTER: Duration = Duration::from_secs(5);
+const MAX_RESENDS: u32 = 8;
 /// 請求的時間差超過這個就拒絕(防止重放)
 const MAX_SKEW: i64 = 300;
 /// 等待回應的時間
@@ -79,8 +87,10 @@ enum Kind {
     },
     /// 回應內容的一段
     Rbody,
-    /// 收到第 seq 段了(流量控制)
+    /// 收到第 seq 段(含)以前的了
     Ack,
+    /// 少了第 seq 段, 請從那段重送
+    Nack,
     /// 失敗
     Err { msg: String },
     /// 請求方不要了
@@ -119,6 +129,12 @@ fn decode(plain: &[u8]) -> Option<(Header, Bytes)> {
     Some((h, Bytes::copy_from_slice(&plain[4 + len..])))
 }
 
+/// 送出速度限制(token bucket), 同一條連線共用
+struct Pacer {
+    tokens: f64,
+    last: Instant,
+}
+
 /// 連線中的 MQTT
 #[derive(Clone)]
 pub struct Conn {
@@ -126,10 +142,45 @@ pub struct Conn {
     pub cipher: Arc<Cipher>,
     pub group: String,
     pub me: String,
+    pacer: Arc<Mutex<Pacer>>,
 }
 
 impl Conn {
+    pub fn new(client: AsyncClient, cipher: Arc<Cipher>, group: String, me: String) -> Self {
+        Self {
+            client,
+            cipher,
+            group,
+            me,
+            pacer: Arc::new(Mutex::new(Pacer {
+                tokens: BURST,
+                last: Instant::now(),
+            })),
+        }
+    }
+
+    /// 等到可以送出 n bytes
+    async fn pace(&self, n: usize) {
+        loop {
+            let wait = {
+                let mut p = self.pacer.lock().unwrap();
+                let t = Instant::now();
+                p.tokens = (p.tokens + t.duration_since(p.last).as_secs_f64() * RATE).min(BURST);
+                p.last = t;
+                if p.tokens >= n as f64 || p.tokens >= BURST {
+                    p.tokens -= n as f64;
+                    return;
+                }
+                (n as f64 - p.tokens) / RATE
+            };
+            tokio::time::sleep(Duration::from_secs_f64(wait.min(2.0))).await;
+        }
+    }
+
     async fn send(&self, to: &str, h: &Header, data: &[u8]) -> Result<(), String> {
+        if !data.is_empty() {
+            self.pace(data.len()).await;
+        }
         let topic = self.cipher.inbox_topic(&self.group, to);
         let payload = self.cipher.seal(&topic, &encode(h, data));
         self.client
@@ -138,7 +189,7 @@ impl Conn {
             .map_err(|e| e.to_string())
     }
 
-    /// 不等待的送出(在同步的程式裡用)
+    /// 不等待的送出(在同步的程式裡用, 只用在沒有資料的小訊息)
     fn try_send(&self, to: &str, h: &Header) {
         let topic = self.cipher.inbox_topic(&self.group, to);
         let payload = self.cipher.seal(&topic, &encode(h, &[]));
@@ -158,6 +209,93 @@ impl Conn {
     }
 }
 
+/// 接收方的回報
+#[derive(Debug, Clone, Copy)]
+enum Fb {
+    Ack(u32),
+    Nack(u32),
+}
+
+/// 分段送出(請求內容或回應內容), 保留還沒被確認的段, 需要時重送
+struct Outgoing<'a> {
+    conn: &'a Conn,
+    to: &'a str,
+    id: &'a str,
+    /// Body 或 Rbody
+    kind: Kind,
+    fb: UnboundedReceiver<Fb>,
+    buf: VecDeque<(u32, bool, Vec<u8>)>,
+    next: u32,
+    acked: u32,
+    resends: u32,
+}
+
+impl<'a> Outgoing<'a> {
+    fn new(conn: &'a Conn, to: &'a str, id: &'a str, kind: Kind, fb: UnboundedReceiver<Fb>) -> Self {
+        Self {
+            conn,
+            to,
+            id,
+            kind,
+            fb,
+            buf: VecDeque::new(),
+            next: 1,
+            acked: 0,
+            resends: 0,
+        }
+    }
+
+    async fn send_one(&self, seq: u32, more: bool, data: &[u8]) -> Result<(), String> {
+        let h = self.conn.header(self.to, self.id, seq, more, self.kind.clone());
+        self.conn.send(self.to, &h, data).await
+    }
+
+    /// 送出一段; 最後一段(more = false)會等到對方全部收到
+    async fn push(&mut self, data: Vec<u8>, more: bool) -> Result<(), String> {
+        let seq = self.next;
+        self.next += 1;
+        self.send_one(seq, more, &data).await?;
+        self.buf.push_back((seq, more, data));
+        while seq.saturating_sub(self.acked) >= WINDOW || (!more && self.acked < seq) {
+            self.wait().await?;
+        }
+        Ok(())
+    }
+
+    async fn wait(&mut self) -> Result<(), String> {
+        match tokio::time::timeout(RESEND_AFTER, self.fb.recv()).await {
+            Ok(Some(Fb::Ack(s))) => self.ack(s),
+            Ok(Some(Fb::Nack(s))) => {
+                self.ack(s.saturating_sub(1));
+                self.retry().await?;
+            }
+            Ok(None) => return Err("連線中斷".into()),
+            Err(_) => self.retry().await?,
+        }
+        Ok(())
+    }
+
+    fn ack(&mut self, s: u32) {
+        if s > self.acked {
+            self.acked = s;
+            self.resends = 0;
+            self.buf.retain(|(q, _, _)| *q > s);
+        }
+    }
+
+    /// 重送還沒被確認的段
+    async fn retry(&mut self) -> Result<(), String> {
+        self.resends += 1;
+        if self.resends > MAX_RESENDS {
+            return Err(format!("{} 沒有回應(重送多次失敗)", self.to));
+        }
+        for (seq, more, data) in self.buf.clone() {
+            self.send_one(seq, more, &data).await?;
+        }
+        Ok(())
+    }
+}
+
 /// 請求方收到的回應片段
 struct Piece {
     seq: u32,
@@ -170,6 +308,8 @@ struct Piece {
 struct Incoming {
     tx: UnboundedSender<Result<Bytes, io::Error>>,
     next: u32,
+    /// 已經為哪一段要求重送過(避免一直要求)
+    nacked: u32,
 }
 
 #[derive(Default)]
@@ -179,8 +319,8 @@ pub struct Bus {
     pending: Mutex<HashMap<String, UnboundedSender<Piece>>>,
     /// 處理中的遠端請求, 還在接收內容: from:id → 內容
     serving: Mutex<HashMap<String, Incoming>>,
-    /// 處理中的遠端請求, 正在送出回應: from:id → 對方確認到第幾段
-    acks: Mutex<HashMap<String, UnboundedSender<u32>>>,
+    /// 正在送出內容(上傳或回應), 等對方回報: 對方:id → 回報
+    feedback: Mutex<HashMap<String, UnboundedSender<Fb>>>,
     /// 請求方取消的
     cancelled: Mutex<HashSet<String>>,
     /// 處理過的請求(防止重放): from:id → 時間
@@ -199,7 +339,7 @@ impl Bus {
             for (_, inc) in self.serving.lock().unwrap().drain() {
                 let _ = inc.tx.send(Err(io::Error::other("連線中斷")));
             }
-            self.acks.lock().unwrap().clear();
+            self.feedback.lock().unwrap().clear();
         }
     }
 
@@ -209,6 +349,12 @@ impl Bus {
 
     pub fn set_router(&self, r: Router) {
         let _ = self.router.set(r);
+    }
+
+    fn feedback_channel(&self, key: &str) -> UnboundedReceiver<Fb> {
+        let (tx, rx) = unbounded_channel();
+        self.feedback.lock().unwrap().insert(key.to_string(), tx);
+        rx
     }
 
     // ------------------------------------------------------------ 請求方
@@ -222,6 +368,8 @@ impl Bus {
         let id = conn.cipher.random_hex(8);
         let (tx, mut rx) = unbounded_channel();
         self.pending.lock().unwrap().insert(id.clone(), tx);
+        let fb_key = format!("{to}:{id}");
+        let fb = self.feedback_channel(&fb_key);
         let guard = Pending {
             bus: self.clone(),
             conn: conn.clone(),
@@ -243,65 +391,32 @@ impl Bus {
             .await?;
 
         // 請求內容(上傳): 每段標 more, 最後一段(可能是空的)標結束
-        let mut early: Option<Piece> = None; // 上傳中就收到的回應(例如被拒絕)
-        let mut acked = 0u32;
-        let mut stream = body.into_data_stream();
-        let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
-        let mut seq = 1u32;
-        let mut total = 0u64;
-        let mut ended = false;
-        while !ended && early.is_none() {
-            match stream.next().await {
-                Some(Ok(b)) => {
-                    total += b.len() as u64;
-                    if total > LIMIT {
-                        return Err(format!("超過 {} MB 的上限", LIMIT / 1024 / 1024));
-                    }
-                    buf.extend_from_slice(&b);
+        {
+            let mut out = Outgoing::new(&conn, to, &id, Kind::Body, fb);
+            let mut stream = body.into_data_stream();
+            let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
+            let mut total = 0u64;
+            while let Some(b) = stream.next().await {
+                let b = b.map_err(|e| format!("讀取請求內容失敗: {e}"))?;
+                total += b.len() as u64;
+                if total > LIMIT {
+                    return Err(format!("超過 {} MB 的上限", LIMIT / 1024 / 1024));
                 }
-                Some(Err(e)) => return Err(format!("讀取請求內容失敗: {e}")),
-                None => ended = true,
-            }
-            while buf.len() >= CHUNK || (ended && early.is_none()) {
-                let n = buf.len().min(CHUNK);
-                let chunk: Vec<u8> = buf.drain(..n).collect();
-                let more = !(ended && buf.is_empty());
-                conn.send(to, &conn.header(to, &id, seq, more, Kind::Body), &chunk)
-                    .await?;
-                // 流量控制: 領先太多就等對方確認
-                while seq.saturating_sub(acked) >= WINDOW {
-                    let p = tokio::time::timeout(CHUNK_TIMEOUT, rx.recv())
-                        .await
-                        .map_err(|_| format!("{to} 沒有回應"))?
-                        .ok_or("連線中斷")?;
-                    match p.kind {
-                        Kind::Ack => acked = acked.max(p.seq),
-                        _ => {
-                            early = Some(p);
-                            break;
-                        }
-                    }
-                }
-                seq += 1;
-                if !more || early.is_some() {
-                    break;
+                buf.extend_from_slice(&b);
+                while buf.len() >= CHUNK {
+                    let chunk: Vec<u8> = buf.drain(..CHUNK).collect();
+                    out.push(chunk, true).await?;
                 }
             }
+            out.push(buf, false).await?;
         }
+        self.feedback.lock().unwrap().remove(&fb_key);
 
-        // 回應開始(略過上傳時的確認)
-        let first = match early {
-            Some(p) => p,
-            None => loop {
-                let p = tokio::time::timeout(FIRST_TIMEOUT, rx.recv())
-                    .await
-                    .map_err(|_| format!("{to} 沒有回應(可能離線或還沒更新到支援這個功能的版本)"))?
-                    .ok_or("連線中斷")?;
-                if !matches!(p.kind, Kind::Ack) {
-                    break p;
-                }
-            },
-        };
+        // 回應開始
+        let first = tokio::time::timeout(FIRST_TIMEOUT, rx.recv())
+            .await
+            .map_err(|_| format!("{to} 沒有回應(可能離線或還沒更新到支援這個功能的版本)"))?
+            .ok_or("連線中斷")?;
         let (status, headers) = match first.kind {
             Kind::Res { status, headers } => (status, headers),
             Kind::Err { msg } => return Err(msg),
@@ -355,6 +470,9 @@ impl Bus {
             return;
         }
         let key = format!("{}:{}", h.from, h.id);
+        if test_drop(&h) {
+            return;
+        }
         match h.kind {
             Kind::Req { method, uri, headers } => {
                 // 防止重放: 時間要接近, 也不能是處理過的
@@ -368,10 +486,14 @@ impl Bus {
                     seen.insert(key.clone(), t);
                 }
                 let (tx, rx) = unbounded_channel();
-                self.serving
-                    .lock()
-                    .unwrap()
-                    .insert(key, Incoming { tx, next: 1 });
+                self.serving.lock().unwrap().insert(
+                    key,
+                    Incoming {
+                        tx,
+                        next: 1,
+                        nacked: 0,
+                    },
+                );
                 let bus = self.clone();
                 tokio::spawn(async move {
                     bus.serve(conn, h.from, h.id, method, uri, headers, rx).await;
@@ -380,15 +502,25 @@ impl Bus {
             Kind::Body => {
                 let mut serving = self.serving.lock().unwrap();
                 let Some(inc) = serving.get_mut(&key) else {
+                    // 已經處理完(例如重送的最後一段): 告訴對方都收到了
+                    if !h.more {
+                        conn.try_send(&h.from, &conn.header(&h.from, &h.id, h.seq, false, Kind::Ack));
+                    }
                     return;
                 };
+                let reply = |seq: u32, kind: Kind| {
+                    conn.try_send(&h.from, &conn.header(&h.from, &h.id, seq, false, kind));
+                };
                 if h.seq < inc.next {
-                    return; // 重複收到(MQTT 重送), 略過
+                    reply(inc.next - 1, Kind::Ack); // 重複收到: 再回報一次
+                    return;
                 }
-                if h.seq != inc.next {
-                    // 少了一段: 中止, 不要產生壞掉的檔案
-                    let _ = inc.tx.send(Err(io::Error::other("傳輸中斷(資料不完整)")));
-                    serving.remove(&key);
+                if h.seq > inc.next {
+                    // 少了一段: 請對方從那段重送(同一段只要求一次)
+                    if inc.nacked != inc.next {
+                        inc.nacked = inc.next;
+                        reply(inc.next, Kind::Nack);
+                    }
                     return;
                 }
                 inc.next += 1;
@@ -396,7 +528,7 @@ impl Bus {
                     let _ = inc.tx.send(Ok(data));
                 }
                 if h.seq % ACK_EVERY == 0 || !h.more {
-                    conn.try_send(&h.from, &conn.header(&h.from, &h.id, h.seq, false, Kind::Ack));
+                    reply(h.seq, Kind::Ack);
                 }
                 if !h.more {
                     serving.remove(&key);
@@ -405,21 +537,16 @@ impl Bus {
             Kind::Cancel => {
                 self.cancelled.lock().unwrap().insert(key.clone());
                 self.serving.lock().unwrap().remove(&key);
-                self.acks.lock().unwrap().remove(&key);
+                self.feedback.lock().unwrap().remove(&key);
             }
-            Kind::Ack => {
-                // 對方確認收到了: 可能是我們上傳的(pending), 或我們送出的回應(acks)
-                if let Some(tx) = self.acks.lock().unwrap().get(&key) {
-                    let _ = tx.send(h.seq);
-                    return;
-                }
-                if let Some(tx) = self.pending.lock().unwrap().get(&h.id) {
-                    let _ = tx.send(Piece {
-                        seq: h.seq,
-                        more: false,
-                        kind: Kind::Ack,
-                        data,
-                    });
+            Kind::Ack | Kind::Nack => {
+                let fb = if matches!(h.kind, Kind::Ack) {
+                    Fb::Ack(h.seq)
+                } else {
+                    Fb::Nack(h.seq)
+                };
+                if let Some(tx) = self.feedback.lock().unwrap().get(&key) {
+                    let _ = tx.send(fb);
                 }
             }
             kind @ (Kind::Res { .. } | Kind::Rbody | Kind::Err { .. }) => {
@@ -481,8 +608,10 @@ impl Bus {
                 return;
             }
         };
-        // 不需要再收請求內容了(例如上傳被拒絕)
-        self.serving.lock().unwrap().remove(&key);
+        // 請求內容還沒收完就有回應(例如上傳被拒絕): 告訴對方不用再送了
+        if self.serving.lock().unwrap().remove(&key).is_some() {
+            conn.try_send(&from, &conn.header(&from, &id, u32::MAX, false, Kind::Ack));
+        }
 
         let (parts, body) = res.into_parts();
         let start = conn.header(
@@ -495,8 +624,7 @@ impl Bus {
                 headers: pass_headers(&parts.headers),
             },
         );
-        let (ack_tx, mut ack_rx) = unbounded_channel();
-        self.acks.lock().unwrap().insert(key.clone(), ack_tx);
+        let fb = self.feedback_channel(&key);
         let _cleanup = Cleanup {
             bus: self.clone(),
             key: key.clone(),
@@ -504,54 +632,52 @@ impl Bus {
         if conn.send(&from, &start, &[]).await.is_err() {
             return;
         }
+        let mut out = Outgoing::new(&conn, &from, &id, Kind::Rbody, fb);
         let mut stream = body.into_data_stream();
         let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
-        let mut seq = 1u32;
-        let mut acked = 0u32;
         let mut total = 0u64;
-        let mut ended = false;
-        while !ended {
-            match stream.next().await {
-                Some(Ok(b)) => {
-                    total += b.len() as u64;
-                    if total > LIMIT {
-                        let msg = format!("超過 {} MB 的上限", LIMIT / 1024 / 1024);
-                        let _ = conn.send(&from, &err(seq, msg), &[]).await;
-                        return;
-                    }
-                    buf.extend_from_slice(&b);
-                }
-                Some(Err(e)) => {
-                    let _ = conn.send(&from, &err(seq, e.to_string()), &[]).await;
+        while let Some(b) = stream.next().await {
+            let b = match b {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = conn.send(&from, &err(out.next, e.to_string()), &[]).await;
                     return;
                 }
-                None => ended = true,
+            };
+            total += b.len() as u64;
+            if total > LIMIT {
+                let msg = format!("超過 {} MB 的上限", LIMIT / 1024 / 1024);
+                let _ = conn.send(&from, &err(out.next, msg), &[]).await;
+                return;
             }
-            while buf.len() >= CHUNK || ended {
-                if self.cancelled.lock().unwrap().remove(&key) {
+            buf.extend_from_slice(&b);
+            while buf.len() >= CHUNK {
+                if self.cancelled.lock().unwrap().contains(&key) {
                     return;
                 }
-                let n = buf.len().min(CHUNK);
-                let chunk: Vec<u8> = buf.drain(..n).collect();
-                let more = !(ended && buf.is_empty());
-                let h = conn.header(&from, &id, seq, more, Kind::Rbody);
-                if conn.send(&from, &h, &chunk).await.is_err() {
-                    return;
-                }
-                // 流量控制
-                while more && seq.saturating_sub(acked) >= WINDOW {
-                    match tokio::time::timeout(CHUNK_TIMEOUT, ack_rx.recv()).await {
-                        Ok(Some(a)) => acked = acked.max(a),
-                        _ => return, // 對方不見了
-                    }
-                }
-                seq += 1;
-                if !more {
+                let chunk: Vec<u8> = buf.drain(..CHUNK).collect();
+                if out.push(chunk, true).await.is_err() {
                     return;
                 }
             }
         }
+        let _ = out.push(buf, false).await;
     }
+}
+
+/// 測試用: 環境變數 CNG6_TEST_DROP=N 時, 故意丟掉每第 N 段內容(模擬 broker 丟訊息)
+fn test_drop(h: &Header) -> bool {
+    static EVERY: OnceLock<u64> = OnceLock::new();
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let every = *EVERY.get_or_init(|| {
+        std::env::var("CNG6_TEST_DROP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    every > 0
+        && matches!(h.kind, Kind::Body | Kind::Rbody)
+        && (COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) % every == 0
 }
 
 fn pass_headers(h: &HeaderMap) -> Vec<(String, String)> {
@@ -569,7 +695,7 @@ struct Cleanup {
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        self.bus.acks.lock().unwrap().remove(&self.key);
+        self.bus.feedback.lock().unwrap().remove(&self.key);
         self.bus.cancelled.lock().unwrap().remove(&self.key);
     }
 }
@@ -586,6 +712,11 @@ struct Pending {
 impl Drop for Pending {
     fn drop(&mut self) {
         self.bus.pending.lock().unwrap().remove(&self.id);
+        self.bus
+            .feedback
+            .lock()
+            .unwrap()
+            .remove(&format!("{}:{}", self.to, self.id));
         if !self.done {
             let h = self.conn.header(&self.to, &self.id, 0, false, Kind::Cancel);
             self.conn.try_send(&self.to, &h);
@@ -593,7 +724,7 @@ impl Drop for Pending {
     }
 }
 
-/// 回應內容的 stream: 檢查順序、回報確認
+/// 回應內容的 stream: 依序收下, 回報收到哪裡, 少了就要求重送
 fn response_stream(
     mut guard: Pending,
     mut rx: UnboundedReceiver<Piece>,
@@ -605,7 +736,11 @@ fn response_stream(
             guard.done = true;
             return;
         }
+        let reply = |g: &Pending, seq: u32, kind: Kind| {
+            g.conn.try_send(&g.to, &g.conn.header(&g.to, &g.id, seq, false, kind));
+        };
         let mut expect = 1;
+        let mut nacked = 0;
         loop {
             let p = match tokio::time::timeout(CHUNK_TIMEOUT, rx.recv()).await {
                 Ok(Some(p)) => p,
@@ -619,19 +754,22 @@ fn response_stream(
                 }
             };
             match p.kind {
-                Kind::Ack => {}
-                // 重複收到(MQTT 重送), 略過
-                Kind::Rbody | Kind::Res { .. } if p.seq < expect => {}
                 Kind::Err { msg } => {
                     guard.done = true;
                     let _ = tx.send(Err(io::Error::other(msg))).await;
                     return;
                 }
-                Kind::Rbody if p.seq == expect => {
+                Kind::Rbody if p.seq < expect => reply(&guard, expect - 1, Kind::Ack),
+                Kind::Rbody if p.seq > expect => {
+                    if nacked != expect {
+                        nacked = expect;
+                        reply(&guard, expect, Kind::Nack);
+                    }
+                }
+                Kind::Rbody => {
                     expect += 1;
-                    if p.seq % ACK_EVERY == 0 && p.more {
-                        let h = guard.conn.header(&guard.to, &guard.id, p.seq, false, Kind::Ack);
-                        guard.conn.try_send(&guard.to, &h);
+                    if p.seq % ACK_EVERY == 0 || !p.more {
+                        reply(&guard, p.seq, Kind::Ack);
                     }
                     if !p.data.is_empty() && tx.send(Ok(p.data)).await.is_err() {
                         return; // 不要了: guard 通知對方
@@ -641,10 +779,7 @@ fn response_stream(
                         return;
                     }
                 }
-                _ => {
-                    let _ = tx.send(Err(io::Error::other("傳輸中斷(資料不完整)"))).await;
-                    return;
-                }
+                _ => {} // 重複的 Res 等等: 略過
             }
         }
     });
