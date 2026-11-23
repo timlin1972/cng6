@@ -601,12 +601,10 @@ impl Bus {
         };
         req.extensions_mut()
             .insert(Peer(PeerAddr::Cluster(from.clone())));
+        // Router 不會失敗(錯誤型別是 Infallible)
         let res = match router.oneshot(req).await {
             Ok(r) => r,
-            Err(e) => {
-                let _ = conn.send(&from, &err(0, e.to_string()), &[]).await;
-                return;
-            }
+            Err(e) => match e {},
         };
         // 請求內容還沒收完就有回應(例如上傳被拒絕): 告訴對方不用再送了
         if self.serving.lock().unwrap().remove(&key).is_some() {

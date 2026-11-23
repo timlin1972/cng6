@@ -49,10 +49,10 @@ fn bad(msg: impl Into<String>) -> Response {
     err(StatusCode::BAD_REQUEST, msg)
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, Response> {
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, Box<Response>> {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "內部錯誤"))
+        .map_err(|_| Box::new(err(StatusCode::INTERNAL_SERVER_ERROR, "內部錯誤")))
 }
 
 #[derive(Deserialize)]
@@ -120,7 +120,7 @@ pub async fn list(State(st): State<FilesState>, Query(q): Query<Loc>) -> Respons
         )
             .into_response(),
         Ok(Err(e)) => bad(e),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
@@ -144,7 +144,7 @@ pub async fn usage(State(st): State<FilesState>, Query(q): Query<Loc>) -> Respon
             partial,
         })
         .into_response(),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
@@ -254,7 +254,7 @@ pub async fn read_text(State(st): State<FilesState>, Query(q): Query<Loc>) -> Re
     match res {
         Ok(Ok(t)) => ([(header::CACHE_CONTROL, "no-store")], Json(t)).into_response(),
         Ok(Err(e)) => bad(e),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
@@ -316,7 +316,7 @@ pub async fn save_text(
             Json(Saved { mtime: m }).into_response()
         }
         Ok(Err((code, e))) => err(code, e),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
@@ -476,8 +476,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
         if d.is_dir() { Ok(d) } else { Err("不是資料夾".into()) }
     };
     let mut res = OpResult::default();
-    let log;
-    match op {
+    let log = match op {
         Op::Mkdir { root, path, name } => {
             let p = fsops::child(&dir_of(root, &path)?, &name)?;
             if std::fs::symlink_metadata(&p).is_ok() {
@@ -486,7 +485,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
             std::fs::create_dir(&p).map_err(|e| format!("無法建立資料夾: {e}"))?;
             res.message = format!("已建立資料夾 {name}");
             res.name = Some(name.clone());
-            log = format!("檔案 新增資料夾 {}/{name}", path.trim_end_matches('/'));
+            format!("檔案 新增資料夾 {}/{name}", path.trim_end_matches('/'))
         }
         Op::Newfile { root, path, name } => {
             let p = fsops::child(&dir_of(root, &path)?, &name)?;
@@ -500,7 +499,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 })?;
             res.message = format!("已建立 {name}");
             res.name = Some(name.clone());
-            log = format!("檔案 新增檔案 {}/{name}", path.trim_end_matches('/'));
+            format!("檔案 新增檔案 {}/{name}", path.trim_end_matches('/'))
         }
         Op::Rename { root, path, name } => {
             let p = resolve(root, &path)?;
@@ -523,7 +522,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
             std::fs::rename(&p, &dst).map_err(|e| format!("無法改名: {e}"))?;
             res.message = format!("已改名為 {name}");
             res.name = Some(name.clone());
-            log = format!("檔案 改名 {path} → {name}");
+            format!("檔案 改名 {path} → {name}")
         }
         Op::Trash { root, paths } => {
             let mut done = Vec::new();
@@ -538,7 +537,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已移到回收桶 {} 項", done.len());
-            log = format!("檔案 刪除(移到回收桶) {}", done.join(", "));
+            format!("檔案 刪除(移到回收桶) {}", done.join(", "))
         }
         Op::Copy {
             root,
@@ -563,7 +562,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已複製 {} 項", done.len());
-            log = format!("檔案 複製 {} → {}", done.join(", "), display(st, to_root, &to));
+            format!("檔案 複製 {} → {}", done.join(", "), display(st, to_root, &to))
         }
         Op::Move {
             root,
@@ -595,7 +594,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已搬移 {} 項", done.len());
-            log = format!("檔案 搬移 {} → {}", done.join(", "), display(st, to_root, &to));
+            format!("檔案 搬移 {} → {}", done.join(", "), display(st, to_root, &to))
         }
         Op::Unzip { root, path } => {
             let zip = resolve(root, &path)?;
@@ -618,7 +617,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                     return Err(e);
                 }
             }
-            log = format!("檔案 解壓縮 {path}");
+            format!("檔案 解壓縮 {path}")
         }
         Op::Restore { items } => {
             let roots = st.shared.roots();
@@ -630,7 +629,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已還原 {} 項", done.len());
-            log = format!("檔案 從回收桶還原 {}", done.join(", "));
+            format!("檔案 從回收桶還原 {}", done.join(", "))
         }
         Op::Purge { items } => {
             let roots = st.shared.roots();
@@ -642,7 +641,7 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已永久刪除 {n} 項");
-            log = format!("檔案 永久刪除 {n} 項(回收桶)");
+            format!("檔案 永久刪除 {n} 項(回收桶)")
         }
         Op::Empty => {
             let roots = st.shared.roots();
@@ -655,9 +654,9 @@ fn run_op(st: &FilesState, op: Op) -> Result<(OpResult, String), String> {
                 }
             }
             res.message = format!("已清空回收桶({n} 項)");
-            log = format!("檔案 清空回收桶({n} 項)");
+            format!("檔案 清空回收桶({n} 項)")
         }
-    }
+    };
     Ok((res, log))
 }
 
@@ -681,7 +680,7 @@ pub async fn op(
             Json(res).into_response()
         }
         Ok(Err(e)) => bad(e),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
@@ -689,7 +688,7 @@ pub async fn trash_list(State(st): State<FilesState>) -> Response {
     let roots = st.shared.roots();
     match blocking(move || trash::list(&roots)).await {
         Ok(items) => ([(header::CACHE_CONTROL, "no-store")], Json(items)).into_response(),
-        Err(r) => r,
+        Err(r) => *r,
     }
 }
 
