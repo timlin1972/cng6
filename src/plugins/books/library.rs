@@ -381,7 +381,7 @@ impl Library {
 
     // ------------------------------------------------------------ 進度
 
-    fn load_progress(&self, dir: &Path) -> BTreeMap<String, Progress> {
+    pub fn load_progress(&self, dir: &Path) -> BTreeMap<String, Progress> {
         std::fs::read_to_string(dir.join(PROGRESS_FILE))
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())

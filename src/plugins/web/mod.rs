@@ -56,6 +56,12 @@ pub struct Web {
 impl Web {
     pub fn new(remote: remote::Sender, services: server::Services) -> Self {
         let (tx, rx) = mpsc::channel();
+        // cluster 用本機的網頁 API 處理別台轉過來的請求(web 沒有啟動也可以)
+        services.cluster.set_router(server::local_api(
+            tx.clone(),
+            remote.clone(),
+            services.clone(),
+        ));
         Self {
             config: Config {
                 port: DEFAULT_PORT,

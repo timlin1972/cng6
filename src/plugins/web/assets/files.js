@@ -110,16 +110,16 @@ const FilesApp = (() => {
     req(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
   const PREF_KEY = "cng6.files";
-  function loadPref() {
+  function loadPref(key = PREF_KEY) {
     try {
-      return JSON.parse(localStorage.getItem(PREF_KEY)) || {};
+      return JSON.parse(localStorage.getItem(key)) || {};
     } catch {
       return {};
     }
   }
-  function savePref(p) {
+  function savePref(p, key = PREF_KEY) {
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify(p));
+      localStorage.setItem(key, JSON.stringify(p));
     } catch {
       /* 略過 */
     }
@@ -129,11 +129,13 @@ const FilesApp = (() => {
   let clipboard = null; // { mode: "copy" | "cut", root, dir, names }
 
   // ======================================================================
-  function mount(el, { device = "pc" } = {}) {
+  // base: 操作別台時的 API 前綴(例如 /api/cluster/node/pi4), node: 那台的名稱
+  function mount(el, { device = "pc", base = "", node = null } = {}) {
     const mobile = device === "mobile";
     el.classList.add("fm-root", mobile ? "fm-mobile" : "fm-pc");
     el.tabIndex = -1;
-    const pref = loadPref();
+    const prefKey = node ? `${PREF_KEY}:${node}` : PREF_KEY;
+    const pref = loadPref(prefKey);
     let roots = [];
     let root = pref.root || 0;
     let path = pref.path || "";
@@ -292,12 +294,12 @@ const FilesApp = (() => {
 
     // ---------------------------------------------------------------- 載入
     function remember() {
-      savePref({ root, path, sort, hidden: showHidden });
+      savePref({ root, path, sort, hidden: showHidden }, prefKey);
     }
 
     async function loadRoots() {
       try {
-        roots = await req("/api/files/roots");
+        roots = await req(`${base}/api/files/roots`);
       } catch (e) {
         list.replaceChildren(h("div", "fm-empty", `無法讀取根目錄: ${e.message}`));
         return;
@@ -366,7 +368,7 @@ const FilesApp = (() => {
       if (mode === "trash") return loadTrash(keepScroll);
       const top = list.scrollTop;
       try {
-        const res = await req(`/api/files/list?${qs({ root, path })}`);
+        const res = await req(`${base}/api/files/list?${qs({ root, path })}`);
         entries = res.entries;
       } catch (e) {
         entries = [];
@@ -432,7 +434,7 @@ const FilesApp = (() => {
 
     function render() {
       renderCrumbs();
-      pasteBtn.hidden = !clipboard || mode !== "files";
+      pasteBtn.hidden = !myClip() || mode !== "files";
       el.querySelectorAll('[data-act="mkdir"], [data-act="newfile"], .fm-tools label').forEach((b) => (b.hidden = mode !== "files"));
       filterEl.hidden = mode !== "files";
       if (mode === "trash") return renderTrash();
@@ -468,7 +470,7 @@ const FilesApp = (() => {
       const kind = kindOf(e);
       const r = h("div", `fm-row ${selected.has(e.name) ? "sel" : ""} ${e.name.startsWith(".") ? "hidden-file" : ""}`);
       r.dataset.name = e.name;
-      if (clipboard?.mode === "cut" && clipboard.root === root && clipboard.dir === path && clipboard.names.includes(e.name)) r.classList.add("cut");
+      if (myClip()?.mode === "cut" && clipboard.root === root && clipboard.dir === path && clipboard.names.includes(e.name)) r.classList.add("cut");
       const name = h("div", "fm-col fm-c-name");
       const check = h("span", "fm-check");
       check.innerHTML = ICON.check;
@@ -693,7 +695,7 @@ const FilesApp = (() => {
     // ---------------------------------------------------------------- 操作
     async function op(body) {
       try {
-        const res = await post("/api/files/op", body);
+        const res = await post(`${base}/api/files/op`, body);
         report(res);
         return res;
       } catch (e) {
@@ -760,7 +762,7 @@ const FilesApp = (() => {
     function setClipboard(m) {
       const names = selectedEntries().map((e) => e.name);
       if (!names.length) return;
-      clipboard = { mode: m, root, dir: path, names };
+      clipboard = { mode: m, root, dir: path, names, base };
       toast(`已${m === "cut" ? "剪下" : "複製"} ${names.length} 項, 到目的地按「貼上」`);
       if (mobile) {
         selected.clear();
@@ -769,8 +771,11 @@ const FilesApp = (() => {
       render();
     }
 
+    // 剪貼簿只能在同一台機器裡貼上
+    const myClip = () => (clipboard && clipboard.base === base ? clipboard : null);
+
     async function paste() {
-      if (!clipboard) return;
+      if (!myClip()) return;
       const c = clipboard;
       // 剪下再貼回同一個資料夾: 什麼都不用做
       if (c.mode === "cut" && c.root === root && c.dir === path) {
@@ -791,7 +796,7 @@ const FilesApp = (() => {
     }
 
     function rawUrl(e, dl = false) {
-      return `/files/raw?${qs({ root, path: join(path, e.name), ...(dl ? { dl: 1 } : {}) })}`;
+      return `${base}/files/raw?${qs({ root, path: join(path, e.name), ...(dl ? { dl: 1 } : {}) })}`;
     }
 
     function download(sel) {
@@ -799,7 +804,7 @@ const FilesApp = (() => {
       const a = h("a");
       if (sel.length === 1 && !sel[0].dir) a.href = rawUrl(sel[0], true);
       else {
-        a.href = `/files/zip?${qs({ root, path, names: JSON.stringify(sel.map((e) => e.name)) })}`;
+        a.href = `${base}/files/zip?${qs({ root, path, names: JSON.stringify(sel.map((e) => e.name)) })}`;
         toast("壓縮中, 下載馬上開始…");
       }
       a.download = "";
@@ -846,7 +851,7 @@ const FilesApp = (() => {
       ok.focus();
       if (e.dir) {
         try {
-          const u = await req(`/api/files/usage?${qs({ root, path: join(path, e.name) })}`);
+          const u = await req(`${base}/api/files/usage?${qs({ root, path: join(path, e.name) })}`);
           usageEl.textContent = `${u.files.toLocaleString()} 個檔案, ${size(u.bytes)}${u.partial ? "(項目太多, 只算了一部分)" : ""}`;
         } catch (err) {
           usageEl.textContent = err.message;
@@ -868,9 +873,10 @@ const FilesApp = (() => {
           "-",
           { label: "複製", run: () => setClipboard("copy"), hint: "Ctrl+C" },
           { label: "剪下", run: () => setClipboard("cut"), hint: "Ctrl+X" },
-          clipboard && e.dir && !many && { label: `貼上到「${e.name}」`, run: () => transfer(clipboard.mode === "cut" ? "move" : "copy", clipboard, { root, path: join(path, e.name) }).then((r) => r && clipboard?.mode === "cut" && (clipboard = null)) },
+          myClip() && e.dir && !many && { label: `貼上到「${e.name}」`, run: () => transfer(clipboard.mode === "cut" ? "move" : "copy", clipboard, { root, path: join(path, e.name) }).then((r) => r && clipboard?.mode === "cut" && (clipboard = null)) },
           !many && { label: "重新命名", run: () => rename(e), hint: "F2" },
           !many && { label: "內容", run: () => info(e) },
+          !base && !sel.some((x) => x.dir) && { label: "傳送到其他機器…", run: () => sendTo(sel.length ? sel : [e]) },
           "-",
           { label: many ? `刪除 ${sel.length} 項` : "刪除", run: trashSelected, danger: true, hint: "Del" },
         ],
@@ -885,7 +891,7 @@ const FilesApp = (() => {
           { label: "新增資料夾", run: mkdir },
           { label: "新增檔案", run: newFile },
           { label: "上傳檔案…", run: () => fileInput.click() },
-          clipboard && { label: `貼上 ${clipboard.names.length} 項`, run: paste, hint: "Ctrl+V" },
+          myClip() && { label: `貼上 ${clipboard.names.length} 項`, run: paste, hint: "Ctrl+V" },
           "-",
           { label: "全選", run: selectAll, hint: "Ctrl+A" },
           { label: showHidden ? "不顯示隱藏檔" : "顯示隱藏檔", run: toggleHidden, hint: "Ctrl+H" },
@@ -894,6 +900,34 @@ const FilesApp = (() => {
         ],
         x,
         y
+      );
+    }
+
+    /** 傳到 cluster 裡的另一台(放在對方的「收到的檔案」) */
+    async function sendTo(sel) {
+      let s;
+      try {
+        s = await req("/api/cluster");
+      } catch {
+        return toast("無法讀取 cluster", false);
+      }
+      const nodes = (s.nodes || []).filter((n) => !n.me && n.online && !n.stale);
+      if (!s.connected || !nodes.length) return toast("cluster 沒有其他上線的機器", false);
+      menu(
+        nodes.map((n) => ({
+          label: `傳到 ${n.name}`,
+          run: async () => {
+            toast(`傳送中… ${sel.length} 個檔案到 ${n.name}`);
+            try {
+              const r = await post("/api/cluster/send", { node: n.name, root, paths: sel.map((x) => join(path, x.name)) });
+              report(r);
+            } catch (err) {
+              toast(err.message, false);
+            }
+          },
+        })),
+        innerWidth / 2,
+        innerHeight / 3
       );
     }
 
@@ -909,7 +943,7 @@ const FilesApp = (() => {
     }
     function downloadFolder() {
       const a = h("a");
-      a.href = `/files/zip?${qs({ root, path: parentOf(path), names: JSON.stringify([path.split("/").pop()]) })}`;
+      a.href = `${base}/files/zip?${qs({ root, path: parentOf(path), names: JSON.stringify([path.split("/").pop()]) })}`;
       a.download = "";
       document.body.append(a);
       a.click();
@@ -920,7 +954,7 @@ const FilesApp = (() => {
     function uploadOne(file, r, dir, onProgress) {
       return new Promise((resolve, reject) => {
         const x = new XMLHttpRequest();
-        x.open("PUT", `/api/files/upload?${qs({ root: r, path: dir, name: file.name })}`);
+        x.open("PUT", `${base}/api/files/upload?${qs({ root: r, path: dir, name: file.name })}`);
         x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
         x.onload = () => (x.status < 300 ? resolve(JSON.parse(x.responseText)) : reject(new Error(x.responseText || x.statusText)));
         x.onerror = () => reject(new Error("連線中斷"));
@@ -1074,7 +1108,7 @@ const FilesApp = (() => {
       const p = join(path, e.name);
       let file;
       try {
-        file = await req(`/api/files/text?${qs({ root, path: p })}`);
+        file = await req(`${base}/api/files/text?${qs({ root, path: p })}`);
       } catch (err) {
         if (guess) return info(e);
         return toast(err.message, false);
@@ -1105,7 +1139,7 @@ const FilesApp = (() => {
       async function save(force = false) {
         saveBtn.disabled = true;
         try {
-          const r = await post(`/api/files/text?${qs({ root, path: p })}`, { text: ta.value, mtime, force }, "PUT");
+          const r = await post(`${base}/api/files/text?${qs({ root, path: p })}`, { text: ta.value, mtime, force }, "PUT");
           mtime = r.mtime;
           saved = ta.value;
           toast("已存檔");
@@ -1147,7 +1181,7 @@ const FilesApp = (() => {
     async function loadTrash(keepScroll = false) {
       const top = list.scrollTop;
       try {
-        trashItems = await req("/api/files/trash");
+        trashItems = await req(`${base}/api/files/trash`);
       } catch (e) {
         trashItems = [];
         toast(e.message, false);

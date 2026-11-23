@@ -7,10 +7,14 @@
 //! 每台要設定同一把金鑰(cluster.key): 資料加密, topic 也由金鑰推導,
 //! 所以可以放心使用公開的 broker(預設 broker.emqx.io)。
 
+pub mod alerts;
+pub mod bus;
 pub mod crypto;
 pub mod mqtt;
 pub mod node;
+pub mod sync;
 
+use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, RwLock};
 
@@ -22,9 +26,13 @@ use ratatui::widgets::{Paragraph, Wrap};
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::plugin::{Ctx, PanelRect, Plugin, complete_from_help, panel_block, parse_usize};
+
+use crate::plugin::{Ctx, Event, PanelRect, Plugin, complete_from_help, panel_block, parse_usize};
+use crate::plugins::{books, music, wallpaper};
+use crate::remote;
 use crate::webui::{Card, Status, WebMeta};
-use mqtt::{Cmd, Config, Node, Role, SharedState};
+use alerts::{Alert, Limits};
+use mqtt::{Clip, Cmd, Config, Node, Role, SharedState};
 
 const DEFAULT_BROKER: &str = "broker.emqx.io:8883";
 const DEFAULT_INTERVAL: u64 = 10;
@@ -36,6 +44,12 @@ const STALE_FACTOR: i64 = 3;
 pub struct Shared {
     state: SharedState,
     cfg: Arc<RwLock<Config>>,
+    pub bus: Arc<bus::Bus>,
+    limits: Arc<RwLock<Limits>>,
+    /// 同步用的設定值
+    settings: Arc<RwLock<BTreeMap<String, (String, bool)>>>,
+    /// 送指令給背景 thread(網頁送剪貼簿用)
+    tx: Arc<RwLock<Option<UnboundedSender<Cmd>>>>,
 }
 
 /// 給網頁的資料
@@ -51,6 +65,9 @@ pub struct Snapshot {
     pub idle: Option<String>,
     pub now: i64,
     pub nodes: Vec<NodeView>,
+    pub alerts_active: Vec<Alert>,
+    pub alerts: Vec<Alert>,
+    pub clips: Vec<Clip>,
 }
 
 #[derive(Serialize)]
@@ -73,6 +90,32 @@ impl Shared {
                 broker: DEFAULT_BROKER.into(),
                 interval: DEFAULT_INTERVAL,
             })),
+            bus: Default::default(),
+            limits: Default::default(),
+            settings: Default::default(),
+            tx: Default::default(),
+        }
+    }
+
+    /// 本機的網頁 API(web plugin 建立後設定), 用來處理別台轉過來的請求
+    pub fn set_router(&self, r: axum::Router) {
+        self.bus.set_router(r);
+    }
+
+    /// 送到共用剪貼簿
+    pub fn clip(&self, text: String) -> Result<(), String> {
+        if text.trim().is_empty() {
+            return Err("內容是空的".into());
+        }
+        if text.len() > mqtt::CLIP_MAX {
+            return Err(format!("超過 {} KB", mqtt::CLIP_MAX / 1024));
+        }
+        if !self.state.read().unwrap().connected {
+            return Err("cluster 沒有連線".into());
+        }
+        match &*self.tx.read().unwrap() {
+            Some(tx) => tx.send(Cmd::Clip(text)).map_err(|_| "cluster 沒有在執行".to_string()),
+            None => Err("cluster 沒有在執行".into()),
         }
     }
 
@@ -102,6 +145,9 @@ impl Shared {
             idle: st.idle.clone(),
             now,
             nodes,
+            alerts_active: st.alerts_active.clone(),
+            alerts: st.alerts.clone(),
+            clips: st.clips.clone(),
         }
     }
 }
@@ -113,10 +159,28 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    pub fn new(shared: Shared) -> Self {
+    pub fn new(
+        shared: Shared,
+        remote: remote::Sender,
+        books: books::Shared,
+        music: music::Shared,
+        wallpaper: wallpaper::Shared,
+    ) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (log_tx, log) = mpsc::channel();
-        mqtt::spawn(shared.state.clone(), rx, log_tx);
+        *shared.tx.write().unwrap() = Some(tx.clone());
+        let extra = mqtt::Extra {
+            bus: shared.bus.clone(),
+            limits: shared.limits.clone(),
+            deps: sync::Deps {
+                books,
+                music,
+                wallpaper,
+                remote,
+                settings: shared.settings.clone(),
+            },
+        };
+        mqtt::spawn(shared.state.clone(), rx, log_tx, extra);
         let me = Self { shared, tx, log };
         me.push();
         me
@@ -190,13 +254,16 @@ impl Plugin for Cluster {
             ("info <name>", "一台機器的詳細狀態"),
             ("forget <name>", "移除一台已經不用的機器(清掉 broker 上的紀錄)"),
             ("genkey", "產生一把新的隨機金鑰(cluster.key)"),
+            ("run <name|all> <command...>", "在別台執行 CLI 指令, 結果顯示在 Message"),
+            ("clip", "顯示共用剪貼簿"),
+            ("clip <text...>", "送到共用剪貼簿(每台都收得到)"),
             ("reconnect", "重新連線"),
         ]
     }
 
     fn complete(&self, args: &[&str]) -> Vec<(String, String)> {
         match args {
-            ["info" | "forget"] => self
+            ["info" | "forget" | "run"] => self
                 .shared
                 .state
                 .read()
@@ -218,11 +285,26 @@ impl Plugin for Cluster {
             ("key", "共用金鑰, 群組裡每台要相同(cluster genkey 產生)", String::new()),
             ("broker", "MQTT broker(host:port, 8883 走 TLS)", DEFAULT_BROKER.into()),
             ("interval", "送出狀態的間隔(秒), 2~3600", DEFAULT_INTERVAL.to_string()),
+            ("alert_temp", "溫度超過幾度(°C)通知", "75".into()),
+            ("alert_disk", "磁碟使用超過幾 % 通知", "90".into()),
+            ("alert_mem", "記憶體使用超過幾 % 通知", "90".into()),
         ]
     }
 
     fn apply_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
         let v = value.trim();
+        // 通知門檻不需要重新連線
+        if let Some(which) = key.strip_prefix("alert_") {
+            let n = parse_usize(v, 1, 150)?;
+            let mut l = self.shared.limits.write().unwrap();
+            match which {
+                "temp" => l.temp = n as f32,
+                "disk" => l.disk = n as f64,
+                "mem" => l.mem = n as f64,
+                _ => return Err(format!("不支援的設定 '{key}'")),
+            }
+            return Ok(());
+        }
         {
             let mut cfg = self.shared.cfg.write().unwrap();
             match key {
@@ -298,6 +380,30 @@ impl Plugin for Cluster {
                 ctx.info(format!("新的金鑰: {key}"));
                 ctx.info(format!("每台都要設定: settings set cluster.key {key}"));
             }
+            ["run", to, cmd @ ..] if !cmd.is_empty() => {
+                if *to == self.cfg().name {
+                    ctx.error("這台自己的指令直接執行就好");
+                    return;
+                }
+                let _ = self.tx.send(Cmd::Run {
+                    to: to.to_string(),
+                    line: cmd.join(" "),
+                });
+                ctx.info(format!("cluster: 在 {to} 執行: {}", cmd.join(" ")));
+            }
+            ["clip"] => {
+                let snap = self.shared.snapshot();
+                if snap.clips.is_empty() {
+                    ctx.info("共用剪貼簿是空的");
+                }
+                for c in snap.clips.iter().take(5) {
+                    ctx.info(format!("[{}, {} 前] {}", c.from, human_duration(snap.now - c.ts), c.text));
+                }
+            }
+            ["clip", text @ ..] if !text.is_empty() => match self.shared.clip(text.join(" ")) {
+                Ok(()) => ctx.info("已送到共用剪貼簿"),
+                Err(e) => ctx.error(format!("cluster clip: {e}")),
+            },
             ["reconnect"] => {
                 // 送一個不同的設定再送回來, 讓背景 thread 重新連線
                 let mut c = self.cfg();
@@ -308,6 +414,19 @@ impl Plugin for Cluster {
                 ctx.info("cluster: 重新連線中…");
             }
             _ => ctx.error("用法: 輸入 'help cluster' 查看"),
+        }
+    }
+
+    fn on_event(&mut self, event: &Event) {
+        // 同步用: 記下要同步的設定值
+        if let Event::SettingsChanged(rows) = event {
+            let mut map = self.shared.settings.write().unwrap();
+            map.clear();
+            for r in rows {
+                if sync::SETTING_KEYS.contains(&r.key.as_str()) {
+                    map.insert(r.key.clone(), (r.value.clone(), r.value == r.default));
+                }
+            }
         }
     }
 
@@ -374,7 +493,7 @@ impl Plugin for Cluster {
             Status::Off
         } else if snap.error.is_some() && !snap.connected {
             Status::Critical
-        } else if !snap.connected || others.iter().any(|v| v.stale) {
+        } else if !snap.connected || others.iter().any(|v| v.stale) || !snap.alerts_active.is_empty() {
             Status::Warning
         } else {
             Status::Good
@@ -386,6 +505,9 @@ impl Plugin for Cluster {
             _ => format!("{} · 其他 {} 台, {online} 台上線", snap.role.as_str(), others.len()),
         };
         let mut card = Card::new().status(status).summary(summary);
+        for a in snap.alerts_active.iter().filter(|a| a.kind != "offline").take(3) {
+            card = card.text(format!("⚠ {}: {}", a.node, a.text), Some(Status::Warning));
+        }
         if !others.is_empty() {
             card = card.table(others.iter().map(|v| {
                 let (_, _, st) = status_text(v, snap.now);

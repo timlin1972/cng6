@@ -1,4 +1,5 @@
-// cng6 Cluster: 群組裡每台機器的狀態(PC 視窗與手機共用)
+// cng6 Cluster: 群組裡每台機器的狀態、通知、共用剪貼簿,
+// 點一台機器可以用它的 CLI、管理它的檔案(透過加密的 MQTT 轉送)
 "use strict";
 
 const ClusterApp = (() => {
@@ -30,6 +31,7 @@ const ClusterApp = (() => {
   }
   const pct = (u, t) => (t ? (u * 100) / t : 0);
   const level = (p) => (p >= 90 ? "crit" : p >= 75 ? "warn" : "ok");
+  const nodeBase = (name) => `/api/cluster/node/${encodeURIComponent(name)}`;
 
   function meter(label, p, text) {
     const m = h("div", "cl-meter");
@@ -42,57 +44,283 @@ const ClusterApp = (() => {
     return m;
   }
 
+  /** 一台機器的狀態卡片 */
+  function nodeCard(n, now, { clickable = false } = {}) {
+    const i = n.info;
+    const state = n.me ? "me" : !n.online ? "off" : n.stale ? "stale" : "on";
+    const c = h("article", `cl-card ${state} ${clickable ? "clickable" : ""}`);
+    const head = h("div", "cl-card-head");
+    head.append(h("span", "cl-dot"), h("b", "cl-name", n.name), h("span", `cl-role ${n.role}`, n.role === "server" ? "Server" : "Client"));
+    if (n.me) head.append(h("span", "cl-me", "這台"));
+    else if (clickable) head.append(h("span", "cl-open", "指令 · 檔案 ›"));
+    c.append(head);
+    const ago = dur(now - n.last_seen);
+    c.append(h("div", "cl-state", n.me ? "本機" : !n.online ? `離線 · ${ago}前` : n.stale ? `沒有回應 · ${ago}` : "上線"));
+    if (!i) {
+      c.append(h("div", "cl-empty", "還沒有收到資料"));
+      return c;
+    }
+    const live = n.me || (n.online && !n.stale);
+    const meters = h("div", `cl-meters ${live ? "" : "dim"}`);
+    meters.append(
+      meter("CPU", i.cpu_usage, `${Math.round(i.cpu_usage)}%`),
+      meter("記憶體", pct(i.mem_used, i.mem_total), `${bytes(i.mem_used)} / ${bytes(i.mem_total)}`),
+      meter("磁碟", pct(i.disk_used, i.disk_total), `${bytes(i.disk_used)} / ${bytes(i.disk_total)}`)
+    );
+    c.append(meters);
+    const dl = h("dl", "cl-facts");
+    const add = (k, val) => val && dl.append(h("dt", null, k), h("dd", null, val));
+    add("負載", i.load.map((x) => x.toFixed(2)).join("  "));
+    if (i.temp != null) add("溫度", `${i.temp.toFixed(1)}°C`);
+    add("開機", dur(i.uptime));
+    add("cng6", `${i.version} · 執行 ${dur(now - i.started)}`);
+    add("系統", `${i.os} · ${i.kernel}`);
+    add("CPU", `${i.cpu || i.arch} ×${i.cores}`);
+    add("IP", i.ips.join(", "));
+    c.append(dl);
+    return c;
+  }
+
+  // ---------------------------------------------------------------- 遠端 CLI
+  function terminal(host, name) {
+    host.classList.add("cl-term");
+    const out = h("div", "cl-term-out");
+    const row = h("form", "cl-term-row");
+    const prompt = h("span", "cl-term-prompt", `${name}>`);
+    const input = h("input", "cl-term-input");
+    input.placeholder = "輸入指令, 例如 system info、help";
+    input.spellcheck = false;
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("autocomplete", "off");
+    row.append(prompt, input);
+    host.append(out, row);
+    const session = `cluster-web-${Math.random().toString(36).slice(2, 10)}`;
+    const history = [];
+    let hi = 0;
+    const line = (text, cls = "") => {
+      out.append(h("div", `cl-term-line ${cls}`, text));
+      out.scrollTop = out.scrollHeight;
+    };
+    line(`連到 ${name}(透過加密的 MQTT)。指令和本機的 CLI 一樣。`, "dim");
+    async function run(cmd) {
+      line(`${prompt.textContent} ${cmd}`, "cmd");
+      input.disabled = true;
+      try {
+        const r = await fetch(`${nodeBase(name)}/api/cli`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session, op: "exec", line: cmd }),
+        });
+        if (!r.ok) throw new Error((await r.text()) || r.statusText);
+        const d = await r.json();
+        for (const o of d.output) line(o.text, o.level);
+        prompt.textContent = `${name}${d.path?.length ? " " + d.path.join(" ") : ""}>`;
+      } catch (e) {
+        line(e.message, "error");
+      }
+      input.disabled = false;
+      input.focus();
+    }
+    row.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      history.push(cmd);
+      hi = history.length;
+      input.value = "";
+      run(cmd);
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp" && hi > 0) {
+        input.value = history[--hi];
+        e.preventDefault();
+      } else if (e.key === "ArrowDown") {
+        hi = Math.min(history.length, hi + 1);
+        input.value = history[hi] || "";
+        e.preventDefault();
+      }
+    });
+    setTimeout(() => input.focus(), 50);
+  }
+
+  // ---------------------------------------------------------------- 主畫面
   function mount(el, { device = "pc" } = {}) {
-    el.classList.add("cl-root", device === "mobile" ? "cl-mobile" : "cl-pc");
+    const mobile = device === "mobile";
+    el.classList.add("cl-root", mobile ? "cl-mobile" : "cl-pc");
     el.innerHTML = `
-      <header class="cl-head">
-        <div class="cl-self"></div>
-        <div class="cl-conn"></div>
-      </header>
-      <div class="cl-grid"></div>`;
+      <div class="cl-main">
+        <header class="cl-head">
+          <div class="cl-self"></div>
+          <div class="cl-conn"></div>
+        </header>
+        <section class="cl-alerts" hidden></section>
+        <div class="cl-grid"></div>
+        <section class="cl-clip" hidden>
+          <h3>共用剪貼簿</h3>
+          <form class="cl-clip-form">
+            <textarea class="cl-clip-input" rows="2" placeholder="輸入文字或網址, 送出後每台都收得到"></textarea>
+            <button class="cl-btn primary">送出</button>
+          </form>
+          <div class="cl-clip-list"></div>
+        </section>
+      </div>`;
     const selfEl = el.querySelector(".cl-self");
     const connEl = el.querySelector(".cl-conn");
     const grid = el.querySelector(".cl-grid");
+    const alertsEl = el.querySelector(".cl-alerts");
+    const clipEl = el.querySelector(".cl-clip");
+    const clipList = el.querySelector(".cl-clip-list");
+    const clipInput = el.querySelector(".cl-clip-input");
     let timer = null;
     let stopped = false;
+    let detail = null; // 打開的機器 { name, close }
+    let lastClips = "";
 
-    function card(v, now) {
-      const n = v;
-      const i = n.info;
-      const state = n.me ? "me" : !n.online ? "off" : v.stale ? "stale" : "on";
-      const c = h("article", `cl-card ${state}`);
-      const head = h("div", "cl-card-head");
-      head.append(h("span", "cl-dot"), h("b", "cl-name", n.name), h("span", `cl-role ${n.role}`, n.role === "server" ? "Server" : "Client"));
-      if (n.me) head.append(h("span", "cl-me", "這台"));
-      c.append(head);
-      const ago = dur(now - n.last_seen);
-      const stText = n.me ? "本機" : !n.online ? `離線 · ${ago}前` : v.stale ? `沒有回應 · ${ago}` : "上線";
-      c.append(h("div", "cl-state", stText));
-      if (!i) {
-        c.append(h("div", "cl-empty", "還沒有收到資料"));
-        return c;
+    function toast(text, ok = true) {
+      let t = el.querySelector(".cl-toast");
+      if (!t) {
+        t = h("div", "cl-toast");
+        el.append(t);
       }
-      const live = n.me || (n.online && !v.stale);
-      const meters = h("div", `cl-meters ${live ? "" : "dim"}`);
-      meters.append(
-        meter("CPU", i.cpu_usage, `${Math.round(i.cpu_usage)}%`),
-        meter("記憶體", pct(i.mem_used, i.mem_total), `${bytes(i.mem_used)} / ${bytes(i.mem_total)}`),
-        meter("磁碟", pct(i.disk_used, i.disk_total), `${bytes(i.disk_used)} / ${bytes(i.disk_total)}`)
-      );
-      c.append(meters);
-      const dl = h("dl", "cl-facts");
-      const add = (k, val) => val && dl.append(h("dt", null, k), h("dd", null, val));
-      add("負載", i.load.map((x) => x.toFixed(2)).join("  "));
-      if (i.temp != null) add("溫度", `${i.temp.toFixed(1)}°C`);
-      add("開機", dur(i.uptime));
-      add("cng6", `${i.version} · 執行 ${dur(now - i.started)}`);
-      add("系統", `${i.os} · ${i.kernel}`);
-      add("CPU", `${i.cpu || i.arch} ×${i.cores}`);
-      add("IP", i.ips.join(", "));
-      c.append(dl);
-      return c;
+      t.textContent = text;
+      t.dataset.ok = ok;
+      t.classList.add("show");
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => t.classList.remove("show"), 2400);
     }
 
+    el.querySelector(".cl-clip-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = clipInput.value;
+      if (!text.trim()) return;
+      try {
+        const r = await fetch("/api/cluster/clip", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        clipInput.value = "";
+        toast("已送到共用剪貼簿");
+        setTimeout(load, 600);
+      } catch (err) {
+        toast(err.message, false);
+      }
+    });
+    clipInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) el.querySelector(".cl-clip-form").requestSubmit();
+    });
+
+    function renderClips(s) {
+      const key = JSON.stringify(s.clips);
+      if (key === lastClips) return;
+      lastClips = key;
+      clipList.replaceChildren();
+      if (!s.clips.length) clipList.append(h("div", "cl-empty", "還沒有內容"));
+      for (const c of s.clips) {
+        const item = h("div", "cl-clip-item");
+        const meta = h("div", "cl-clip-meta", `${c.from} · ${dur(s.now - c.ts)}前`);
+        const text = h("div", "cl-clip-text", c.text);
+        const copy = h("button", "cl-btn small", "複製");
+        copy.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(c.text);
+            toast("已複製");
+          } catch {
+            // 沒有剪貼簿權限: 選取文字讓使用者自己複製
+            const r = document.createRange();
+            r.selectNodeContents(text);
+            getSelection().removeAllRanges();
+            getSelection().addRange(r);
+            toast("請按 Ctrl+C / 長按複製", false);
+          }
+        });
+        item.append(meta, copy, text);
+        if (/^https?:\/\/\S+$/.test(c.text.trim())) {
+          const a = h("a", "cl-btn small", "開啟");
+          a.href = c.text.trim();
+          a.target = "_blank";
+          a.rel = "noopener";
+          item.insertBefore(a, text);
+        }
+        clipList.append(item);
+      }
+    }
+
+    function renderAlerts(s) {
+      const recent = s.alerts.filter((a) => s.now - a.ts < 86400).slice(0, 8);
+      alertsEl.hidden = !s.alerts_active.length && !recent.length;
+      if (alertsEl.hidden) return;
+      alertsEl.replaceChildren(h("h3", null, "通知"));
+      const list = h("div", "cl-alert-list");
+      const shown = new Set();
+      for (const a of s.alerts_active) {
+        shown.add(`${a.node}:${a.kind}`);
+        const r = h("div", "cl-alert active");
+        r.append(h("b", null, a.node), h("span", null, a.text), h("time", null, `${dur(s.now - a.ts)}前`));
+        list.append(r);
+      }
+      for (const a of recent) {
+        if (a.active && shown.has(`${a.node}:${a.kind}`)) continue;
+        const r = h("div", "cl-alert");
+        r.append(h("b", null, a.node), h("span", null, `${a.text}(已恢復)`), h("time", null, `${dur(s.now - a.ts)}前`));
+        list.append(r);
+      }
+      alertsEl.append(list);
+    }
+
+    // ---- 一台機器的詳細畫面: 狀態 / 指令 / 檔案
+    function openNode(n, s) {
+      closeNode();
+      const wrap = h("div", "cl-detail");
+      const bar = h("header", "cl-detail-bar");
+      const back = h("button", "cl-btn", mobile ? "‹ 返回" : "‹ 所有機器");
+      const title = h("b", null, n.name);
+      const tabs = h("nav", "cl-tabs");
+      bar.append(back, title, tabs);
+      const body = h("div", "cl-detail-body");
+      wrap.append(bar, body);
+      el.append(wrap);
+      let cleanup = null;
+      const show = (tab) => {
+        if (cleanup) cleanup();
+        cleanup = null;
+        body.replaceChildren();
+        body.className = `cl-detail-body tab-${tab}`;
+        tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+        if (tab === "status") {
+          const cur = (lastSnap?.nodes || s.nodes).find((x) => x.name === n.name) || n;
+          body.append(nodeCard(cur, lastSnap?.now || s.now));
+        } else if (tab === "cli") {
+          terminal(body, n.name);
+        } else if (tab === "files") {
+          const host = h("div", "cl-files");
+          body.append(host);
+          cleanup = FilesApp.mount(host, { device, base: nodeBase(n.name), node: n.name });
+        }
+      };
+      for (const [k, label] of [["status", "狀態"], ["cli", "指令"], ["files", "檔案"]]) {
+        const b = h("button", "cl-tab", label);
+        b.dataset.tab = k;
+        b.addEventListener("click", () => show(k));
+        tabs.append(b);
+      }
+      back.addEventListener("click", closeNode);
+      detail = {
+        name: n.name,
+        close() {
+          if (cleanup) cleanup();
+          wrap.remove();
+        },
+      };
+      show("status");
+    }
+    function closeNode() {
+      if (detail) detail.close();
+      detail = null;
+    }
+
+    let lastSnap = null;
     async function load() {
       let s;
       try {
@@ -102,6 +330,7 @@ const ClusterApp = (() => {
         connEl.dataset.state = "err";
         return;
       }
+      lastSnap = s;
       selfEl.replaceChildren();
       if (s.role === "off") {
         selfEl.append(h("b", null, "Cluster 未啟用"));
@@ -120,7 +349,10 @@ const ClusterApp = (() => {
         connEl.dataset.state = s.error ? "err" : "wait";
       }
       grid.replaceChildren();
-      if (s.role === "off" || s.idle) {
+      const active = s.role !== "off" && !s.idle;
+      clipEl.hidden = !active;
+      if (!active) {
+        alertsEl.hidden = true;
         const help = h("div", "cl-help");
         help.append(h("h3", null, s.idle || "設定角色後開始"));
         const steps = [
@@ -138,19 +370,27 @@ const ClusterApp = (() => {
         grid.append(help);
         return;
       }
-      for (const v of s.nodes) grid.append(card(v, s.now));
+      renderAlerts(s);
+      renderClips(s);
+      for (const n of s.nodes) {
+        const ok = !n.me && n.online && !n.stale && s.connected;
+        const card = nodeCard(n, s.now, { clickable: ok });
+        if (ok) card.addEventListener("click", () => openNode(n, s));
+        grid.append(card);
+      }
       if (s.nodes.length <= 1) grid.append(h("div", "cl-wait", s.role === "server" ? "等待 client 加入…" : `等待 server「${s.server}」…`));
     }
 
     async function loop() {
       if (stopped) return;
-      if (!document.hidden) await load();
+      if (!document.hidden && !detail) await load();
       timer = setTimeout(loop, 3000);
     }
     loop();
     return () => {
       stopped = true;
       clearTimeout(timer);
+      closeNode();
     };
   }
 

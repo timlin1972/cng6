@@ -15,7 +15,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{any, get, post, put};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use hyper_util::service::TowerToHyperService;
@@ -73,9 +73,27 @@ impl Drop for Handle {
     }
 }
 
-/// 連線來源位址(每個連線放進 request extension)
-#[derive(Clone, Copy)]
-pub struct Peer(pub SocketAddr);
+/// 連線來源(每個連線放進 request extension)
+#[derive(Clone)]
+pub struct Peer(pub PeerAddr);
+
+#[derive(Clone, Debug)]
+pub enum PeerAddr {
+    /// 一般的網路連線
+    Tcp(SocketAddr),
+    /// 透過 cluster 從另一台機器轉過來的請求(機器名稱)
+    Cluster(String),
+}
+
+impl PeerAddr {
+    /// 記錄用的來源: IP 或 `cluster:<名稱>`
+    pub fn ip(&self) -> String {
+        match self {
+            PeerAddr::Tcp(a) => a.ip().to_string(),
+            PeerAddr::Cluster(name) => format!("cluster:{name}"),
+        }
+    }
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -165,11 +183,16 @@ pub fn start(
     ))
 }
 
-async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: AppState) {
-    let api = Router::new()
-        .route("/api/system", get(sysmon::snapshot))
-        .route("/api/system/stream", get(sysmon::stream))
-        .with_state(SysMon::spawn());
+/// 各 plugin 的網頁 API(不含首頁與系統監控)。
+///
+/// 也給 cluster 用: 其他機器透過 MQTT 轉過來的請求, 直接在本機交給這個 Router 處理。
+pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services) -> Router {
+    let state = AppState {
+        log,
+        port: 0,
+        remote,
+        services,
+    };
     let wp = Router::new()
         .route("/api/wallpaper", get(wallpaper_api::info))
         .route(
@@ -225,9 +248,6 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
             shared: state.services.files.clone(),
             log: state.log.clone(),
         });
-    let cluster = Router::new()
-        .route("/api/cluster", get(cluster_api::info))
-        .with_state(state.services.cluster.clone());
     let worldclock = Router::new()
         .route("/api/worldclock", get(worldclock_api::info))
         .with_state(state.services.worldclock.clone());
@@ -243,11 +263,7 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
     let cli = Router::new()
         .route("/api/cli", post(cli_api::cli))
         .with_state(state.remote.clone());
-    let app = Router::new()
-        .route("/", get(index))
-        .fallback(not_found)
-        .with_state(state.clone())
-        .merge(api)
+    Router::new()
         .merge(cli)
         .merge(wp)
         .merge(music)
@@ -255,14 +271,44 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .merge(worldclock)
         .merge(books)
         .merge(files)
+}
+
+async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: AppState) {
+    let api = Router::new()
+        .route("/api/system", get(sysmon::snapshot))
+        .route("/api/system/stream", get(sysmon::stream))
+        .with_state(SysMon::spawn());
+    let cluster = Router::new()
+        .route("/api/cluster", get(cluster_api::info))
+        .route("/api/cluster/clip", post(cluster_api::clip))
+        .route("/api/cluster/send", post(cluster_api::send))
+        // 透過 MQTT 轉給另一台機器(檔案上傳不限大小, 由 cluster 限制)
+        .route(
+            "/api/cluster/node/{name}/{*rest}",
+            any(cluster_api::proxy).layer(DefaultBodyLimit::disable()),
+        )
+        .with_state(cluster_api::ClusterState {
+            shared: state.services.cluster.clone(),
+            files: state.services.files.clone(),
+        });
+    let app = Router::new()
+        .route("/", get(index))
+        .fallback(not_found)
+        .with_state(state.clone())
+        .merge(api)
+        .merge(local_api(
+            state.log.clone(),
+            state.remote.clone(),
+            state.services.clone(),
+        ))
         .merge(cluster);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {
             continue;
         };
-        let app = app.clone().layer(Extension(Peer(peer)));
-        let redirect = redirect.clone().layer(Extension(Peer(peer)));
+        let app = app.clone().layer(Extension(Peer(PeerAddr::Tcp(peer))));
+        let redirect = redirect.clone().layer(Extension(Peer(PeerAddr::Tcp(peer))));
         let tls = tls.clone();
         tokio::spawn(async move {
             match tls {

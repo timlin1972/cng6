@@ -190,7 +190,13 @@ impl App {
         app.register(Box::new(Files::new(files.clone())));
         // Cluster: plugin 在背景連 MQTT, web 顯示群組裡每台機器的狀態
         let cluster = cluster::Shared::new();
-        app.register(Box::new(Cluster::new(cluster.clone())));
+        app.register(Box::new(Cluster::new(
+            cluster.clone(),
+            remote_tx.clone(),
+            books.clone(),
+            music.clone(),
+            wallpaper.clone(),
+        )));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -401,7 +407,12 @@ impl App {
             let prompt = format!("{}>", session_path.join(" "));
             self.broadcast(&Event::Output(
                 Level::Info,
-                format!("web {}: {prompt} {}", req.peer, req.line.trim()),
+                // 來源: 網頁(IP) 或 cluster 的另一台機器
+                if req.peer.starts_with("cluster:") {
+                    format!("{}: {prompt} {}", req.peer, req.line.trim())
+                } else {
+                    format!("web {}: {prompt} {}", req.peer, req.line.trim())
+                },
             ));
         }
 

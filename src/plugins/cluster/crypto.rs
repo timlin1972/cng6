@@ -55,13 +55,37 @@ impl Cipher {
 
     /// 一台機器的 status topic
     pub fn status_topic(&self, server: &str, name: &str) -> String {
-        let h = sha256(&[&self.topic_secret, b"node", name.as_bytes()]);
-        format!("{}/{}/status", self.group_prefix(server), &hex(&h)[..16])
+        format!("{}/{}/status", self.group_prefix(server), self.node_id(name))
     }
 
     /// 訂閱群組裡所有機器的 status
     pub fn status_filter(&self, server: &str) -> String {
         format!("{}/+/status", self.group_prefix(server))
+    }
+
+    fn node_id(&self, name: &str) -> String {
+        let h = sha256(&[&self.topic_secret, b"node", name.as_bytes()]);
+        hex(&h)[..16].to_string()
+    }
+
+    /// 一台機器的收件匣: 遠端請求與回應都送到這裡
+    pub fn inbox_topic(&self, server: &str, name: &str) -> String {
+        format!("{}/{}/inbox", self.group_prefix(server), self.node_id(name))
+    }
+
+    /// 同步資料(每一項一個保留訊息)
+    pub fn sync_topic(&self, server: &str, key: &str) -> String {
+        let h = sha256(&[&self.topic_secret, b"sync", key.as_bytes()]);
+        format!("{}/sync/{}", self.group_prefix(server), &hex(&h)[..20])
+    }
+
+    pub fn sync_filter(&self, server: &str) -> String {
+        format!("{}/sync/+", self.group_prefix(server))
+    }
+
+    /// 共用剪貼簿
+    pub fn clip_topic(&self, server: &str) -> String {
+        format!("{}/clip", self.group_prefix(server))
     }
 
     /// 加密: `版本 | nonce | 密文+tag`
