@@ -30,6 +30,7 @@ use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use super::books_api::{self, BooksState};
 use super::cli_api;
+use super::cluster_api;
 use super::files_api::{self, FilesState};
 use super::music_api;
 use super::page::{detect_device, render_page};
@@ -37,7 +38,7 @@ use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{books, files, music, wallpaper, weather, worldclock};
+use crate::plugins::{books, cluster, files, music, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -94,6 +95,7 @@ pub struct Services {
     pub worldclock: worldclock::Shared,
     pub books: books::Shared,
     pub files: files::Shared,
+    pub cluster: cluster::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -223,6 +225,9 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
             shared: state.services.files.clone(),
             log: state.log.clone(),
         });
+    let cluster = Router::new()
+        .route("/api/cluster", get(cluster_api::info))
+        .with_state(state.services.cluster.clone());
     let worldclock = Router::new()
         .route("/api/worldclock", get(worldclock_api::info))
         .with_state(state.services.worldclock.clone());
@@ -249,7 +254,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .merge(weather)
         .merge(worldclock)
         .merge(books)
-        .merge(files);
+        .merge(files)
+        .merge(cluster);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {

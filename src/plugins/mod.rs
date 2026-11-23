@@ -1,4 +1,5 @@
 pub mod books;
+pub mod cluster;
 pub mod files;
 pub mod cli;
 pub mod menu;

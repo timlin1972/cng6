@@ -6,6 +6,7 @@
 
 mod books_api;
 mod cli_api;
+mod cluster_api;
 mod files_api;
 mod music_api;
 mod page;

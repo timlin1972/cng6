@@ -20,6 +20,7 @@ use crate::plugin::{
 };
 use crate::plugins::{
     books::{self, Books},
+    cluster::{self, Cluster},
     files::{self, Files},
     cli::Cli,
     menu::Menu,
@@ -187,6 +188,9 @@ impl App {
         // 檔案管理員: plugin 負責設定(根目錄)與回收桶指令, web 提供操作介面
         let files = files::Shared::new();
         app.register(Box::new(Files::new(files.clone())));
+        // Cluster: plugin 在背景連 MQTT, web 顯示群組裡每台機器的狀態
+        let cluster = cluster::Shared::new();
+        app.register(Box::new(Cluster::new(cluster.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -196,6 +200,7 @@ impl App {
                 worldclock,
                 books,
                 files,
+                cluster,
             },
         )));
         app

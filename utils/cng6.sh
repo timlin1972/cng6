@@ -35,8 +35,8 @@ running() {
 
 build() {
     echo "[cng6] 編譯中…"
-    # 降低優先權與並行數, 減少對 SD 卡的壓力
-    if nice -n 10 ionice -c3 cargo build -j 2; then
+    # 低優先權、一次編一個、限制記憶體(見 utils/build.sh), 避免整台卡住
+    if "$ROOT/utils/build.sh" build; then
         return 0
     fi
     if [ -x "$BIN" ]; then

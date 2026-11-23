@@ -12,8 +12,11 @@ encoding_rs = "0.8.44"
 hyper-util = { version = "0.1.21", features = ["server-auto", "tokio", "service"] }
 lofty = "0.25.5"
 ratatui = "0.30"
+ring = "0.17"
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 roxmltree = "0.21.2"
+# MQTT: 不用預設的 TLS 後端(aws-lc-rs 要編 C), 改用專案已經有的 ring
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-rustls-no-provider"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sysinfo = "0.38.4"
@@ -23,6 +26,7 @@ tokio-stream = { version = "0.1.19", features = ["sync"] }
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
 unicode-width = "0.2.3"
+webpki-roots = "1.0"
 ureq = { version = "3.5.2", default-features = false, features = ["rustls", "json"] }
 zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 
