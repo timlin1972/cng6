@@ -480,7 +480,7 @@ fn add_clip(state: &SharedState, clip: Clip) -> bool {
         return false;
     }
     st.clips.insert(0, clip);
-    st.clips.sort_by(|a, b| b.ts.cmp(&a.ts));
+    st.clips.sort_by_key(|c| std::cmp::Reverse(c.ts));
     st.clips.truncate(CLIP_KEEP);
     true
 }

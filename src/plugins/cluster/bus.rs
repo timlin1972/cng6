@@ -527,7 +527,7 @@ impl Bus {
                 if !data.is_empty() {
                     let _ = inc.tx.send(Ok(data));
                 }
-                if h.seq % ACK_EVERY == 0 || !h.more {
+                if h.seq.is_multiple_of(ACK_EVERY) || !h.more {
                     reply(h.seq, Kind::Ack);
                 }
                 if !h.more {
@@ -677,7 +677,7 @@ fn test_drop(h: &Header) -> bool {
     });
     every > 0
         && matches!(h.kind, Kind::Body | Kind::Rbody)
-        && (COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) % every == 0
+        && (COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1).is_multiple_of(every)
 }
 
 fn pass_headers(h: &HeaderMap) -> Vec<(String, String)> {
@@ -709,6 +709,13 @@ struct Pending {
     done: bool,
 }
 
+impl Pending {
+    /// 收完了: 結束時不用通知對方取消
+    fn finish(mut self) {
+        self.done = true;
+    }
+}
+
 impl Drop for Pending {
     fn drop(&mut self) {
         self.bus.pending.lock().unwrap().remove(&self.id);
@@ -726,14 +733,14 @@ impl Drop for Pending {
 
 /// 回應內容的 stream: 依序收下, 回報收到哪裡, 少了就要求重送
 fn response_stream(
-    mut guard: Pending,
+    guard: Pending,
     mut rx: UnboundedReceiver<Piece>,
     more: bool,
 ) -> impl tokio_stream::Stream<Item = Result<Bytes, io::Error>> + Send + 'static {
     let (tx, out) = tokio::sync::mpsc::channel::<Result<Bytes, io::Error>>(4);
     tokio::spawn(async move {
         if !more {
-            guard.done = true;
+            guard.finish();
             return;
         }
         let reply = |g: &Pending, seq: u32, kind: Kind| {
@@ -755,7 +762,7 @@ fn response_stream(
             };
             match p.kind {
                 Kind::Err { msg } => {
-                    guard.done = true;
+                    guard.finish();
                     let _ = tx.send(Err(io::Error::other(msg))).await;
                     return;
                 }
@@ -768,14 +775,14 @@ fn response_stream(
                 }
                 Kind::Rbody => {
                     expect += 1;
-                    if p.seq % ACK_EVERY == 0 || !p.more {
+                    if p.seq.is_multiple_of(ACK_EVERY) || !p.more {
                         reply(&guard, p.seq, Kind::Ack);
                     }
                     if !p.data.is_empty() && tx.send(Ok(p.data)).await.is_err() {
                         return; // 不要了: guard 通知對方
                     }
                     if !p.more {
-                        guard.done = true;
+                        guard.finish();
                         return;
                     }
                 }
