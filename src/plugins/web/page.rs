@@ -80,6 +80,9 @@ const WC_JS: &str = include_str!("assets/worldclock.js");
 /// 電子書(PC 與手機共用)
 const BOOKS_CSS: &str = include_str!("assets/books.css");
 const BOOKS_JS: &str = include_str!("assets/books.js");
+/// 檔案管理員(PC 與手機共用)
+const FILES_CSS: &str = include_str!("assets/files.css");
+const FILES_JS: &str = include_str!("assets/files.js");
 const SYSTEM_CSS: &str = include_str!("assets/system.css");
 const SYSTEM_JS: &str = include_str!("assets/system.js");
 const SHELL_CSS: &str = include_str!("assets/shell.css");
@@ -108,6 +111,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*WCJS*/", WC_JS, 1)
             .replacen("/*BOOKSCSS*/", BOOKS_CSS, 1)
             .replacen("/*BOOKSJS*/", BOOKS_JS, 1)
+            .replacen("/*FILESCSS*/", FILES_CSS, 1)
+            .replacen("/*FILESJS*/", FILES_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
         // 手機: 底部分頁(總覽 / 指令 / 設定), 共用 apps / shell / system 的程式
         Device::Mobile => MOBILE_HTML
@@ -125,6 +130,8 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*WCJS*/", WC_JS, 1)
             .replacen("/*BOOKSCSS*/", BOOKS_CSS, 1)
             .replacen("/*BOOKSJS*/", BOOKS_JS, 1)
+            .replacen("/*FILESCSS*/", FILES_CSS, 1)
+            .replacen("/*FILESJS*/", FILES_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
     }
 }

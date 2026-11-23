@@ -30,13 +30,14 @@ use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use super::books_api::{self, BooksState};
 use super::cli_api;
+use super::files_api::{self, FilesState};
 use super::music_api;
 use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{books, music, wallpaper, weather, worldclock};
+use crate::plugins::{books, files, music, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -92,6 +93,7 @@ pub struct Services {
     pub weather: weather::Shared,
     pub worldclock: worldclock::Shared,
     pub books: books::Shared,
+    pub files: files::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -199,6 +201,28 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
             shared: state.services.books.clone(),
             log: state.log.clone(),
         });
+    let files = Router::new()
+        .route("/api/files/roots", get(files_api::roots))
+        .route("/api/files/list", get(files_api::list))
+        .route("/api/files/usage", get(files_api::usage))
+        .route(
+            "/api/files/text",
+            get(files_api::read_text).put(files_api::save_text),
+        )
+        .route("/api/files/op", post(files_api::op))
+        .route("/api/files/trash", get(files_api::trash_list))
+        .route("/files/raw", get(files_api::raw))
+        .route("/files/zip", get(files_api::zip))
+        // 上傳串流寫入檔案, 不限大小
+        .route(
+            "/api/files/upload",
+            put(files_api::upload).layer(DefaultBodyLimit::disable()),
+        )
+        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+        .with_state(FilesState {
+            shared: state.services.files.clone(),
+            log: state.log.clone(),
+        });
     let worldclock = Router::new()
         .route("/api/worldclock", get(worldclock_api::info))
         .with_state(state.services.worldclock.clone());
@@ -224,7 +248,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .merge(music)
         .merge(weather)
         .merge(worldclock)
-        .merge(books);
+        .merge(books)
+        .merge(files);
     let redirect = Router::new().fallback(redirect).with_state(state);
     loop {
         let Ok((stream, peer)) = listener.accept().await else {

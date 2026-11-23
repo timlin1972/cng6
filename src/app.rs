@@ -20,6 +20,7 @@ use crate::plugin::{
 };
 use crate::plugins::{
     books::{self, Books},
+    files::{self, Files},
     cli::Cli,
     menu::Menu,
     message::Message,
@@ -183,6 +184,9 @@ impl App {
         // 電子書: plugin 負責書庫與轉檔, web 提供閱讀器
         let books = books::Shared::new();
         app.register(Box::new(Books::new(books.clone())));
+        // 檔案管理員: plugin 負責設定(根目錄)與回收桶指令, web 提供操作介面
+        let files = files::Shared::new();
+        app.register(Box::new(Files::new(files.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -191,6 +195,7 @@ impl App {
                 weather,
                 worldclock,
                 books,
+                files,
             },
         )));
         app
