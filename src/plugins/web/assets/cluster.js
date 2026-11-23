@@ -45,14 +45,15 @@ const ClusterApp = (() => {
   }
 
   /** 一台機器的狀態卡片 */
-  function nodeCard(n, now, { clickable = false } = {}) {
+  /** 一台機器的狀態卡片; full = 完整資料(點進去的「狀態」), 否則只有重點 */
+  function nodeCard(n, now, { clickable = false, full = false } = {}) {
     const i = n.info;
     const state = n.me ? "me" : !n.online ? "off" : n.stale ? "stale" : "on";
     const c = h("article", `cl-card ${state} ${clickable ? "clickable" : ""}`);
     const head = h("div", "cl-card-head");
     head.append(h("span", "cl-dot"), h("b", "cl-name", n.name), h("span", `cl-role ${n.role}`, n.role === "server" ? "Server" : "Client"));
-    if (n.me) head.append(h("span", "cl-me", "這台"));
-    else if (clickable) head.append(h("span", "cl-open", "指令 · 檔案 ›"));
+    if (n.me) head.append(h("span", "cl-me", clickable ? "這台 ›" : "這台"));
+    else if (clickable) head.append(h("span", "cl-open", reachable(n) ? "詳細 · 指令 · 檔案 ›" : "詳細 ›"));
     c.append(head);
     const ago = dur(now - n.last_seen);
     c.append(h("div", "cl-state", n.me ? "本機" : !n.online ? `離線 · ${ago}前` : n.stale ? `沒有回應 · ${ago}` : "上線"));
@@ -68,6 +69,15 @@ const ClusterApp = (() => {
       meter("磁碟", pct(i.disk_used, i.disk_total), `${bytes(i.disk_used)} / ${bytes(i.disk_total)}`)
     );
     c.append(meters);
+    if (!full) {
+      // 重點: 溫度 · 開機 · 負載, 其他點進去看
+      const bits = [];
+      if (i.temp != null) bits.push(`${i.temp.toFixed(0)}°C`);
+      bits.push(`開機 ${dur(i.uptime)}`);
+      bits.push(`負載 ${i.load[0].toFixed(2)}`);
+      c.append(h("div", `cl-summary ${live ? "" : "dim"}`, bits.join(" · ")));
+      return c;
+    }
     const dl = h("dl", "cl-facts");
     const add = (k, val) => val && dl.append(h("dt", null, k), h("dd", null, val));
     add("負載", i.load.map((x) => x.toFixed(2)).join("  "));
@@ -80,6 +90,9 @@ const ClusterApp = (() => {
     c.append(dl);
     return c;
   }
+
+  /** 可以用它的指令與檔案(上線中的別台) */
+  const reachable = (n) => !n.me && n.online && !n.stale;
 
   // ---------------------------------------------------------------- 遠端 CLI
   function terminal(host, name) {
@@ -153,6 +166,7 @@ const ClusterApp = (() => {
           <div class="cl-self"></div>
           <div class="cl-conn"></div>
         </header>
+        <div class="cl-body">
         <section class="cl-alerts" hidden></section>
         <div class="cl-grid"></div>
         <section class="cl-clip" hidden>
@@ -163,6 +177,7 @@ const ClusterApp = (() => {
           </form>
           <div class="cl-clip-list"></div>
         </section>
+        </div>
       </div>`;
     const selfEl = el.querySelector(".cl-self");
     const connEl = el.querySelector(".cl-conn");
@@ -290,7 +305,7 @@ const ClusterApp = (() => {
         tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
         if (tab === "status") {
           const cur = (lastSnap?.nodes || s.nodes).find((x) => x.name === n.name) || n;
-          body.append(nodeCard(cur, lastSnap?.now || s.now));
+          body.append(nodeCard(cur, lastSnap?.now || s.now, { full: true }));
         } else if (tab === "cli") {
           terminal(body, n.name);
         } else if (tab === "files") {
@@ -299,7 +314,10 @@ const ClusterApp = (() => {
           cleanup = FilesApp.mount(host, { device, base: nodeBase(n.name), node: n.name });
         }
       };
-      for (const [k, label] of [["status", "狀態"], ["cli", "指令"], ["files", "檔案"]]) {
+      // 這台、離線的機器只有狀態
+      const list = reachable(n) && s.connected ? [["status", "狀態"], ["cli", "指令"], ["files", "檔案"]] : [["status", "狀態"]];
+      tabs.hidden = list.length < 2;
+      for (const [k, label] of list) {
         const b = h("button", "cl-tab", label);
         b.dataset.tab = k;
         b.addEventListener("click", () => show(k));
@@ -373,9 +391,8 @@ const ClusterApp = (() => {
       renderAlerts(s);
       renderClips(s);
       for (const n of s.nodes) {
-        const ok = !n.me && n.online && !n.stale && s.connected;
-        const card = nodeCard(n, s.now, { clickable: ok });
-        if (ok) card.addEventListener("click", () => openNode(n, s));
+        const card = nodeCard(n, s.now, { clickable: !!n.info });
+        if (n.info) card.addEventListener("click", () => openNode(n, s));
         grid.append(card);
       }
       if (s.nodes.length <= 1) grid.append(h("div", "cl-wait", s.role === "server" ? "等待 client 加入…" : `等待 server「${s.server}」…`));

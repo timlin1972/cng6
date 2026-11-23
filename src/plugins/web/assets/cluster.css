@@ -629,3 +629,70 @@
   flex: 1;
   min-height: 34px;
 }
+
+/* ---- 版面: 機器在左, 通知與共用剪貼簿在右(夠寬時) ---- */
+.cl-main {
+  container-type: inline-size;
+}
+
+.cl-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "alerts" "nodes" "clip";
+  gap: 14px;
+  align-items: start;
+}
+
+.cl-body > .cl-alerts {
+  grid-area: alerts;
+  margin: 0;
+}
+
+.cl-body > .cl-grid {
+  grid-area: nodes;
+}
+
+.cl-body > .cl-clip {
+  grid-area: clip;
+  margin: 0;
+}
+
+@container (min-width: 760px) {
+  .cl-body {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+    grid-template-areas: "nodes alerts" "nodes clip" "nodes .";
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .cl-body > .cl-grid {
+    grid-row: 1 / -1;
+  }
+}
+
+.cl-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+/* 精簡卡片的重點一行 */
+.cl-summary {
+  margin-top: 2px;
+  color: var(--cl-text-2);
+  font-size: 12px;
+}
+
+.cl-summary.dim {
+  opacity: 0.6;
+}
+
+.cl-card .cl-meters {
+  margin-bottom: 8px;
+}
+
+/* 點進去的完整狀態 */
+.tab-status .cl-card {
+  max-width: 640px;
+}
+
+.cl-detail-bar .cl-tabs[hidden] {
+  display: none;
+}
