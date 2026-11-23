@@ -683,25 +683,6 @@
   -webkit-user-drag: none;
 }
 
-.bk-comic-strip {
-  position: absolute;
-  inset: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.bk-comic-strip img {
-  max-width: 100%;
-  display: block;
-}
-
-.bk-comic-img[hidden],
-.bk-comic-strip[hidden] {
-  display: none;
-}
-
 /* PDF */
 .bk-pdf {
   background: var(--rd-pdf, #e9e9ec) !important;
@@ -719,36 +700,9 @@
   user-select: none;
 }
 
-.bk-pdf-paper canvas,
-.bk-pdf-box {
+.bk-pdf-paper canvas {
   background: #fff;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
-}
-
-.bk-pdf-strip {
-  position: absolute;
-  inset: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-}
-
-.bk-pdf-box {
-  flex: none;
-}
-
-.bk-pdf-box canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.bk-pdf-paper[hidden],
-.bk-pdf-strip[hidden] {
-  display: none;
 }
 
 .bk-pdf > .bk-empty {
@@ -862,6 +816,44 @@
 
 .bk-mobile .bk-bar.bottom {
   padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+
+/* 全螢幕閱讀: 收起 App 的標題列與分頁列; 工具列浮在內容上, 點畫面中間才出現 */
+body.bk-reading .m-head,
+body.bk-reading .m-tabs {
+  display: none;
+}
+
+.bk-reader.immersive .bk-stage {
+  margin: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+}
+
+.bk-reader.immersive .bk-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  visibility: hidden;
+  transition:
+    transform 0.2s ease,
+    visibility 0s linear 0.2s;
+}
+
+.bk-reader.immersive .bk-bar.top {
+  top: 0;
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  transform: translateY(-100%);
+}
+
+.bk-reader.immersive .bk-bar.bottom {
+  bottom: 0;
+  transform: translateY(100%);
+}
+
+.bk-reader.immersive.bars-on .bk-bar {
+  visibility: visible;
+  transform: none;
+  transition: transform 0.2s ease;
 }
 
 .bk-mobile .bk-chapter {
