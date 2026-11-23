@@ -432,7 +432,8 @@ async fn session(c: &Config, rx: &mut UnboundedReceiver<Cmd>, w: &mut Worker) ->
                 let connected = state.read().unwrap().connected;
                 state.write().unwrap().nodes.insert(c.name.clone(), self_node(c, &sess, info.clone(), connected));
                 if connected {
-                    let _ = client.try_publish(my_topic.clone(), QoS::AtMostOnce, true, msg(true, Some(info)));
+                    // QoS 1: broker 限流時最先丟掉 QoS 0, 狀態送不到會被誤認為「沒有回應」
+                    let _ = client.try_publish(my_topic.clone(), QoS::AtLeastOnce, true, msg(true, Some(info)));
                 }
                 w.check_alerts(c);
             }
