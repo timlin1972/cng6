@@ -824,8 +824,9 @@ body.bk-reading .m-tabs {
   display: none;
 }
 
+/* 上方多留一些空白, 避免第一行字被瀏覽器/系統的毛玻璃狀態列蓋住 */
 .bk-reader.immersive .bk-stage {
-  margin: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+  margin: calc(28px + env(safe-area-inset-top, 0px)) 0 env(safe-area-inset-bottom, 0px);
 }
 
 .bk-reader.immersive .bk-bar {
