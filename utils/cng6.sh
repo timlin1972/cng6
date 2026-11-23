@@ -11,8 +11,9 @@
 #   @reboot /home/timlin/cng6/utils/cng6.sh start
 #
 # run 迴圈:
-# - 每次啟動前先從目前分支的 upstream 快轉更新, 再編譯
-# - 更新或編譯失敗時繼續執行上一次成功編譯的版本
+# - 每次啟動前先從目前分支的 upstream 快轉更新, 再編譯(更新失敗也照樣編譯本機的程式碼)
+# - 更新後這個腳本本身變了: 改用新的腳本重新執行
+# - 編譯失敗時繼續執行上一次成功編譯的版本
 # - cng6 結束碼 3 (restart 指令): 重新編譯並啟動
 # - 結束碼 0 (quit): 結束迴圈, tmux session 也跟著關閉
 # - 其他(當掉): 等 3 秒再重新啟動, 避免一直重啟吃滿 CPU
@@ -48,27 +49,29 @@ build() {
 
 update() {
     echo "[cng6] 從 Git 更新程式碼…"
-    if git -C "$ROOT" pull --ff-only; then
+    # 在背景執行, 不能停下來問帳號密碼或確認主機; 網路不通時也不要卡太久
+    if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15" \
+        timeout 120 git -C "$ROOT" pull --ff-only; then
         return 0
     fi
-    echo "[cng6] Git 更新失敗, 繼續使用本機程式碼"
+    echo "[cng6] Git 更新失敗, 使用本機的程式碼"
     return 1
 }
 
 run_loop() {
+    # bash 執行時已經讀進這個腳本; 被 git 更新後要重新執行才會用到新的內容
+    local self="$ROOT/utils/cng6.sh"
+    local sum
+    sum="$(cksum < "$self")"
     while true; do
         cd "$ROOT" || exit 1
-        updated=0
-        if update; then
-            updated=1
+        update
+        if [ "$(cksum < "$self")" != "$sum" ]; then
+            echo "[cng6] 管理腳本更新了, 用新的腳本重新執行"
+            exec "$self" run
         fi
-        if [ "$updated" -eq 1 ] && ! build; then
+        if ! build; then
             echo "[cng6] 編譯失敗而且沒有可執行的版本, 30 秒後重試 (Ctrl-C 結束)"
-            sleep 30
-            continue
-        fi
-        if [ ! -x "$BIN" ]; then
-            echo "[cng6] 沒有可執行的版本, 30 秒後重試 (Ctrl-C 結束)"
             sleep 30
             continue
         fi
@@ -91,45 +94,50 @@ run_loop() {
     done
 }
 
-case "${1:-}" in
-    start)
-        if running; then
-            echo "cng6 已經在執行 (utils/cng6.sh attach 查看)"
-            exit 0
-        fi
-        tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$ROOT" \
-            -e "CNG6_SESSION=$SESSION" -e "CNG6_WORKDIR=$WORKDIR" "$ROOT/utils/cng6.sh run"
-        echo "cng6 已在背景啟動 (utils/cng6.sh attach 查看)"
-        ;;
-    attach)
-        if ! running; then
-            echo "cng6 沒有在執行 (utils/cng6.sh start 啟動)"
+main() {
+    case "${1:-}" in
+        start)
+            if running; then
+                echo "cng6 已經在執行 (utils/cng6.sh attach 查看)"
+                exit 0
+            fi
+            tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$ROOT" \
+                -e "CNG6_SESSION=$SESSION" -e "CNG6_WORKDIR=$WORKDIR" "$ROOT/utils/cng6.sh run"
+            echo "cng6 已在背景啟動 (utils/cng6.sh attach 查看)"
+            ;;
+        attach)
+            if ! running; then
+                echo "cng6 沒有在執行 (utils/cng6.sh start 啟動)"
+                exit 1
+            fi
+            exec tmux attach -t "$SESSION"
+            ;;
+        stop)
+            if ! running; then
+                echo "cng6 沒有在執行"
+                exit 0
+            fi
+            # 先請 cng6 正常結束(寫入歷史等), 不行再強制關閉
+            tmux send-keys -t "$SESSION" Escape C-u "/quit" Enter
+            for _ in $(seq 20); do
+                running || { echo "cng6 已結束"; exit 0; }
+                sleep 0.5
+            done
+            tmux kill-session -t "$SESSION"
+            echo "cng6 已強制結束"
+            ;;
+        status)
+            if running; then echo "cng6 執行中 (tmux session: $SESSION)"; else echo "cng6 沒有在執行"; fi
+            ;;
+        run)
+            run_loop
+            ;;
+        *)
+            sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
             exit 1
-        fi
-        exec tmux attach -t "$SESSION"
-        ;;
-    stop)
-        if ! running; then
-            echo "cng6 沒有在執行"
-            exit 0
-        fi
-        # 先請 cng6 正常結束(寫入歷史等), 不行再強制關閉
-        tmux send-keys -t "$SESSION" Escape C-u "/quit" Enter
-        for _ in $(seq 20); do
-            running || { echo "cng6 已結束"; exit 0; }
-            sleep 0.5
-        done
-        tmux kill-session -t "$SESSION"
-        echo "cng6 已強制結束"
-        ;;
-    status)
-        if running; then echo "cng6 執行中 (tmux session: $SESSION)"; else echo "cng6 沒有在執行"; fi
-        ;;
-    run)
-        run_loop
-        ;;
-    *)
-        sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
-        exit 1
-        ;;
-esac
+            ;;
+    esac
+}
+
+# 放在同一行: bash 會先讀完整行才執行, 腳本在執行中被 git 改掉也不會接著讀到改過的內容
+main "$@"; exit
