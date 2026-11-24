@@ -211,6 +211,11 @@ impl Plugin for Web {
             ),
             ("key", "https 私鑰檔 (PEM)", DEFAULT_KEY.into()),
             ("log_requests", "在 Message 顯示每個網頁請求", "true".into()),
+            (
+                "mobile_tabs",
+                "手機底部分頁, 用逗號分隔, 最多 5 個, 一定要有 overview。可用: overview(總覽) cli(指令) settings(設定) 或 plugin 名稱(music weather books mail files cluster…)",
+                DEFAULT_MOBILE_TABS.into(),
+            ),
         ]
     }
 
@@ -227,6 +232,8 @@ impl Plugin for Web {
             "cert" => self.set_server(|c| c.cert = PathBuf::from(value)),
             "key" => self.set_server(|c| c.key = PathBuf::from(value)),
             "log_requests" => self.log_requests = parse_bool(value)?,
+            // 網頁直接讀設定值, 這裡只檢查格式
+            "mobile_tabs" => check_mobile_tabs(value)?,
             _ => return Err(format!("不支援的設定 '{key}'")),
         }
         Ok(())
@@ -312,4 +319,41 @@ impl Plugin for Web {
     }
 
     fn render(&mut self, _frame: &mut Frame, _area: Rect, _focused: bool) {}
+}
+
+/// 手機底部分頁的預設值(總覽、音樂、天氣、書、郵件)
+const DEFAULT_MOBILE_TABS: &str = "overview,music,weather,books,mail";
+
+fn check_mobile_tabs(value: &str) -> Result<(), String> {
+    let items: Vec<&str> = value
+        .split([',', '，', '、'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if items.is_empty() || items.len() > 5 {
+        return Err("要有 1~5 個分頁, 用逗號分隔".into());
+    }
+    if !items.iter().any(|s| *s == "overview" || *s == "總覽") {
+        return Err("一定要有 overview(總覽), 其他畫面都從總覽打開".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    if let Some(dup) = items.iter().find(|s| !seen.insert(**s)) {
+        return Err(format!("'{dup}' 重複了"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod mobile_tabs_tests {
+    use super::*;
+
+    #[test]
+    fn check() {
+        assert!(check_mobile_tabs(DEFAULT_MOBILE_TABS).is_ok());
+        assert!(check_mobile_tabs("總覽, 音樂，郵件").is_ok());
+        assert!(check_mobile_tabs("music,mail").is_err());
+        assert!(check_mobile_tabs("overview,a,b,c,d,e").is_err());
+        assert!(check_mobile_tabs("overview,mail,mail").is_err());
+        assert!(check_mobile_tabs("").is_err());
+    }
 }

@@ -220,7 +220,9 @@ button {
 }
 
 .m-tabs button {
+  position: relative;
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1129,4 +1131,33 @@ button.m-row:active {
 
 .m-edge[hidden] {
   display: none;
+}
+
+/* 底部分頁的未讀數 */
+.m-tab-badge {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 5px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.m-tab-badge[hidden] {
+  display: none;
+}
+
+.m-tabs button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

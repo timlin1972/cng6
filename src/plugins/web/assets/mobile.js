@@ -45,7 +45,8 @@
   // ---------------------------------------------------------- 分頁與頁面堆疊
   // 每個分頁有自己的堆疊, 切換分頁時保留狀態(例如輸入到一半的指令)
   const main = $(".m-main");
-  const stacks = { overview: [], cli: [], settings: [] };
+  // 每個底部分頁一個堆疊(分頁可以設定, 見下面的 setTabs)
+  const stacks = { overview: [] };
   let tab = "overview";
   const backBtn = $(".m-back");
   const titleEl = $(".m-title");
@@ -172,14 +173,147 @@
     }
     g = null;
   });
-  document.querySelectorAll(".m-tabs button").forEach((b) =>
-    b.addEventListener("click", () => {
-      // 再點一次目前的分頁: 回到第一頁
-      if (b.dataset.tab === tab) while (stacks[tab].length > 1) pop();
-      tab = b.dataset.tab;
+  // ---- 底部分頁: web.mobile_tabs 設定(最多 5 個, 一定有總覽) ----
+  const TAB_SVG = {
+    overview: `<rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/>`,
+    cli: `<path d="M5 7l5 5-5 5"/><path d="M12 18h7"/>`,
+    settings: `<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/>`,
+  };
+  const CORE = { overview: "總覽", cli: "指令", settings: "設定" };
+  const ALIAS = { 總覽: "overview", 指令: "cli", 設定: "settings" };
+  // Apps 還沒載入時用的名稱與圖示
+  const FALLBACK = { music: ["音樂", "music"], weather: ["天氣", "weather"], books: ["書", "book"], mail: ["郵件", "mail"], files: ["檔案", "folder"] };
+  const DEFAULT_TABS = "overview,music,weather,books,mail";
+  const tabsEl = $(".m-tabs");
+  let tabIds = [];
+  let tabsResolved = false;
+  let tabValue = DEFAULT_TABS;
+
+  const hasPage = (a) => a && (a.card || (a.view && Apps.views[a.view]));
+
+  function resolveTab(tok) {
+    tok = tok.trim();
+    if (!tok) return null;
+    if (CORE[tok]) return tok;
+    if (ALIAS[tok]) return ALIAS[tok];
+    if (!Apps.list.length) return tok; // 還不知道有哪些 App: 先相信設定
+    const a = Apps.list.find((x) => x.name === tok || x.title === tok);
+    return hasPage(a) ? a.name : null;
+  }
+
+  function tabInfo(id) {
+    if (CORE[id]) return { title: CORE[id], svg: TAB_SVG[id] };
+    const a = Apps.find(id);
+    const fb = FALLBACK[id];
+    return { title: a?.title || fb?.[0] || id, svg: Apps.ICONS[a?.icon || fb?.[1]] || Apps.ICONS.other };
+  }
+
+  function setTabs(value, force = false) {
+    tabValue = value || DEFAULT_TABS;
+    let ids = [...new Set(String(tabValue).split(/[,，、]/).map(resolveTab).filter(Boolean))];
+    if (!ids.includes("overview")) ids.unshift("overview");
+    ids = ids.slice(0, 5);
+    if (!force && JSON.stringify(ids) === JSON.stringify(tabIds)) return;
+    // 拿掉的分頁: 收掉它的頁面
+    for (const id of Object.keys(stacks)) {
+      if (id === "overview" || ids.includes(id)) continue;
+      for (const p of stacks[id]) {
+        p.destroy && p.destroy();
+        p.el.remove();
+      }
+      delete stacks[id];
+    }
+    tabIds = ids;
+    tabsEl.replaceChildren(
+      ...ids.map((id) => {
+        const info = tabInfo(id);
+        const b = document.createElement("button");
+        b.setAttribute("role", "tab");
+        b.dataset.tab = id;
+        b.innerHTML = `<svg viewBox="0 0 24 24">${info.svg}</svg><span></span><i class="m-tab-badge" hidden></i>`;
+        b.querySelector("span").textContent = info.title;
+        b.addEventListener("click", () => selectTab(id));
+        return b;
+      }),
+    );
+    if (!stacks[tab]) tab = "overview";
+    show();
+    updateBadges();
+  }
+
+  /** 分頁的第一頁 */
+  function rootPage(id) {
+    if (id === "overview") return overviewPage();
+    if (id === "cli") return cliPage();
+    if (id === "settings") return settingsPage();
+    return detailPage(Apps.find(id));
+  }
+
+  function selectTab(id) {
+    // 再點一次目前的分頁: 回到第一頁
+    if (id === tab && stacks[tab]) {
+      while (stacks[tab].length > 1) pop();
+      return show();
+    }
+    // 第一次打開才建立(音樂、電子書這些畫面比較重)
+    if (!stacks[id]) {
+      if (!CORE[id] && !hasPage(Apps.find(id))) return;
+      stacks[id] = [];
+      tab = id;
+      push(id, rootPage(id));
+      return;
+    }
+    tab = id;
+    show();
+  }
+
+  // 郵件分頁的未讀數
+  async function updateBadges() {
+    const b = tabsEl.querySelector('[data-tab="mail"] .m-tab-badge');
+    if (!b) return;
+    try {
+      const r = await fetch("/api/mail", { cache: "no-store" });
+      const d = await r.json();
+      const n = (d.accounts || []).reduce((sum, a) => sum + (a.unread || 0), 0);
+      b.hidden = !n;
+      b.textContent = n > 99 ? "99+" : String(n);
+    } catch {}
+  }
+  setInterval(() => !document.hidden && updateBadges(), 30000);
+
+  /** 一個 plugin 的畫面: 自訂畫面(view), 或通用的狀態卡片 */
+  function detailPage(app) {
+    const view = app.view && Apps.views[app.view];
+    if (view) {
+      const el = h("div", "m-view");
+      const content = h("div", "m-view-content");
+      el.appendChild(content);
+      const stop = view.mount(content, { device: "mobile" });
+      return { title: app.title, el, destroy: () => typeof stop === "function" && stop() };
+    }
+    return cardPage(app.name, app.title);
+  }
+
+  // 讓其他模組(例如音樂的迷你播放列、新郵件通知)打開某個 plugin 的畫面:
+  // 有自己的分頁就切過去, 沒有就從總覽打開
+  window.MobileNav = {
+    openApp(name) {
+      if (tabIds.includes(name)) {
+        if (stacks[name]) {
+          tab = name;
+          while (stacks[tab].length > 1) pop();
+          show();
+        } else selectTab(name);
+        return;
+      }
+      const app = Apps.find(name);
+      if (!hasPage(app)) return;
+      tab = "overview";
+      while (stacks.overview.length > 1) pop();
       show();
-    }),
-  );
+      push("overview", detailPage(app));
+    },
+  };
 
   // ====================================================================
   // 總覽
@@ -214,6 +348,24 @@
         .map((x) => x.a);
       list.replaceChildren(...sorted.map(row));
       if (!sorted.length) list.appendChild(h("div", "m-empty", "還沒有任何 plugin 提供狀態"));
+      // 指令、設定: 不在底部分頁時放在這裡
+      const core = [
+        ["cli", "cli", "dark", "選單與指令輸入"],
+        ["settings", "settings", "gray", "系統設定與外觀"],
+      ].filter(([id]) => !tabIds.includes(id));
+      for (const [id, icon, color, desc] of core) {
+        const r = h("button", "m-row nav m-app-row");
+        const t = h("div", "m-row-text");
+        t.append(h("div", "m-row-name ui", CORE[id]), h("div", "m-row-desc", desc));
+        r.append(Apps.icon(icon, color, "m-icon"), t, chevron());
+        r.addEventListener("click", () => push("overview", rootPage(id)));
+        list.appendChild(r);
+      }
+      // App 載入後名稱與圖示才確定
+      if (!tabsResolved) {
+        tabsResolved = true;
+        setTabs(tabValue, true);
+      }
       foot.textContent = `更新於 ${new Date().toLocaleTimeString("zh-TW", { hour12: false })}`;
     }
 
@@ -226,34 +378,8 @@
       r.append(Apps.icon(app.icon, app.color, "m-icon"), t);
       if (st === "warning" || st === "critical") r.append(h("span", "m-pill", `${STATUS_ICON[st]} ${Apps.STATUS_TEXT[st]}`));
       r.append(chevron());
-      r.addEventListener("click", () => openDetail(app));
+      r.addEventListener("click", () => MobileNav.openApp(app.name));
       return r;
-    }
-
-    // 讓其他模組(例如音樂的迷你播放列)可以打開某個 plugin 的畫面
-    window.MobileNav = {
-      openApp(name) {
-        const app = Apps.find(name);
-        if (!app) return;
-        tab = "overview";
-        while (stacks.overview.length > 1) pop();
-        show();
-        openDetail(app);
-      },
-    };
-
-    function openDetail(app) {
-      const view = app.view && Apps.views[app.view];
-      if (view) {
-        // 自訂畫面(例如 System 儀表板)
-        const el = h("div", "m-view");
-        const content = h("div", "m-view-content");
-        el.appendChild(content);
-        const stop = view.mount(content, { device: "mobile" });
-        push("overview", { title: app.title, el, destroy: () => typeof stop === "function" && stop() });
-        return;
-      }
-      push("overview", cardPage(app.name, app.title));
     }
 
     return {
@@ -574,7 +700,7 @@
       // 這個瀏覽器
       el.appendChild(h("div", "m-section-title", "這個瀏覽器"));
       const local = h("div", "m-list");
-      local.appendChild(navRow(Apps.icon("appearance", "indigo", "m-icon sm"), "外觀", themeName(), () => push("settings", appearancePage())));
+      local.appendChild(navRow(Apps.icon("appearance", "indigo", "m-icon sm"), "外觀", themeName(), () => push(tab, appearancePage())));
       el.appendChild(local);
       // 系統設定(各 plugin 的分組)
       el.appendChild(h("div", "m-section-title", "系統設定"));
@@ -586,7 +712,7 @@
       for (const g of groups) {
         const m = metaOf(g);
         const changed = rows.filter((r) => groupOf(r.key) === g && r.value !== r.default).length;
-        sys.appendChild(navRow(Apps.icon(m.icon, m.color, "m-icon sm"), m.title, changed ? `已修改 ${changed}` : "", () => push("settings", groupPage(g))));
+        sys.appendChild(navRow(Apps.icon(m.icon, m.color, "m-icon sm"), m.title, changed ? `已修改 ${changed}` : "", () => push(tab, groupPage(g))));
       }
       if (!groups.length) sys.appendChild(h("div", "m-empty", "讀取中…"));
       el.appendChild(sys);
@@ -601,7 +727,7 @@
         Promise.all([Apps.load().catch(() => {}), loadRows()]).then(render);
         render();
         clearInterval(timer);
-        timer = setInterval(() => !document.hidden && tab === "settings" && loadRows(), 4000);
+        timer = setInterval(() => !document.hidden && !el.hidden && el.isConnected && loadRows(), 4000);
       },
     };
   }
@@ -859,10 +985,19 @@
 
   // ---------------------------------------------------------- 啟動
   push("overview", overviewPage());
-  push("cli", cliPage());
-  push("settings", settingsPage());
-  tab = "overview";
-  show();
+  setTabs(DEFAULT_TABS);
+  // 設定改了(在設定頁或別的地方): 底部分頁跟著換
+  rowListeners.add(() => {
+    const r = rows.find((x) => x.key === "web.mobile_tabs");
+    if (r && r.value !== tabValue) setTabs(r.value);
+  });
+  loadRows();
+  setInterval(() => !document.hidden && loadRows(), 10000);
   // 從背景回來時馬上更新
-  document.addEventListener("visibilitychange", () => !document.hidden && top().onShow && top().onShow());
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    top().onShow && top().onShow();
+    loadRows();
+    updateBadges();
+  });
 })();
