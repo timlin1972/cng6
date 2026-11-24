@@ -55,3 +55,6 @@ web_key.pem
 
 # Gmail 帳號與應用程式密碼(權限 600, 不能進 Git)
 /mail-accounts.json
+
+# 個人筆記(使用者自己的檔案)
+/notebook/
