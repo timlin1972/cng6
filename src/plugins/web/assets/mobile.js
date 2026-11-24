@@ -63,7 +63,8 @@
     titleEl.textContent = p.title;
     const prev = stacks[tab][stacks[tab].length - 2];
     backBtn.hidden = !prev;
-    edge.hidden = !prev;
+    // 感應區: 有上一頁, 或這一頁是 App(App 裡面可能有上一層, 例如郵件從信回到列表)
+    edge.hidden = !prev && !!CORE[tab];
     if (prev) $("span", backBtn).textContent = prev.title;
     document.querySelectorAll(".m-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     p.onShow && p.onShow();
@@ -124,8 +125,13 @@
     const y = e.clientY - g.sy;
     if (!g.active) {
       if (x > 8 && x > Math.abs(y)) {
-        g.active = true;
         g.btn = innerBack();
+        // 沒有上一層也沒有上一頁: 不動
+        if (!g.btn && stacks[tab].length < 2) {
+          g = null;
+          return;
+        }
+        g.active = true;
         const p = top();
         g.el = (g.btn && g.btn.dataset.edgeEl && p.el.querySelector(g.btn.dataset.edgeEl)) || p.el;
         g.el.dispatchEvent(new CustomEvent("edgeback-start", { bubbles: true }));
