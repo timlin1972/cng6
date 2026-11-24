@@ -62,6 +62,7 @@
     titleEl.textContent = p.title;
     const prev = stacks[tab][stacks[tab].length - 2];
     backBtn.hidden = !prev;
+    edge.hidden = !prev;
     if (prev) $("span", backBtn).textContent = prev.title;
     document.querySelectorAll(".m-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     p.onShow && p.onShow();
@@ -87,6 +88,90 @@
   }
 
   backBtn.addEventListener("click", pop);
+
+  // ---- 從左邊緣往右滑: 回上一層 ----
+  // App 裡面有「可以邊緣返回」的按鈕(data-edge-back, 正在顯示)就按它(例如郵件從信回到列表),
+  // 沒有就回上一頁。data-edge-el 指定拖動時要移動的元素(預設整頁)。
+  // 左邊一條透明的感應區接手勢: 內容可能是 iframe(信件), 觸控事件不會傳出來。
+  const edge = h("div", "m-edge");
+  edge.setAttribute("aria-hidden", "true");
+  edge.hidden = true;
+  $("#app").append(edge);
+
+  function innerBack() {
+    const p = top();
+    if (!p) return null;
+    const list = [...p.el.querySelectorAll("[data-edge-back]")].filter((b) => !b.disabled && b.offsetParent !== null);
+    return list.pop() || null;
+  }
+
+  let g = null;
+  const resetEl = (el) => {
+    el.style.transition = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  };
+  edge.addEventListener("pointerdown", (e) => {
+    g = { id: e.pointerId, sx: e.clientX, sy: e.clientY, dx: 0, active: false };
+    try {
+      edge.setPointerCapture(e.pointerId);
+    } catch {}
+  });
+  edge.addEventListener("pointermove", (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const x = e.clientX - g.sx;
+    const y = e.clientY - g.sy;
+    if (!g.active) {
+      if (x > 8 && x > Math.abs(y)) {
+        g.active = true;
+        g.btn = innerBack();
+        const p = top();
+        g.el = (g.btn && g.btn.dataset.edgeEl && p.el.querySelector(g.btn.dataset.edgeEl)) || p.el;
+        g.el.dispatchEvent(new CustomEvent("edgeback-start", { bubbles: true }));
+      } else if (Math.abs(y) > 12 || x < -8) {
+        g = null;
+        return;
+      } else return;
+    }
+    g.dx = Math.max(0, x);
+    g.el.style.transform = `translateX(${g.dx}px)`;
+    // 整頁拖動時漸漸淡出(App 自己的層會露出底下的內容, 不用淡出)
+    if (g.el === top().el) g.el.style.opacity = String(1 - (g.dx / g.el.offsetWidth) * 0.6);
+  });
+  edge.addEventListener("pointerup", (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const cur = g;
+    g = null;
+    if (!cur.active) return;
+    const el = cur.el;
+    const done = () => el.dispatchEvent(new CustomEvent("edgeback-end", { bubbles: true }));
+    if (cur.dx > el.offsetWidth * 0.3) {
+      el.style.transition = "transform .18s, opacity .18s";
+      el.style.transform = "translateX(100%)";
+      setTimeout(() => {
+        resetEl(el);
+        done();
+        if (cur.btn) cur.btn.click();
+        else pop();
+      }, 180);
+    } else {
+      el.style.transition = "transform .2s, opacity .2s";
+      el.style.transform = "";
+      el.style.opacity = "";
+      setTimeout(() => {
+        resetEl(el);
+        done();
+      }, 200);
+    }
+  });
+  edge.addEventListener("pointercancel", (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    if (g.active) {
+      resetEl(g.el);
+      g.el.dispatchEvent(new CustomEvent("edgeback-end", { bubbles: true }));
+    }
+    g = null;
+  });
   document.querySelectorAll(".m-tabs button").forEach((b) =>
     b.addEventListener("click", () => {
       // 再點一次目前的分頁: 回到第一頁

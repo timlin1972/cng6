@@ -211,7 +211,7 @@ const BooksApp = (() => {
       el.innerHTML = `
         <div class="bk-lib">
           <header class="bk-lib-head">
-            <button class="bk-ib" data-act="back" title="回書庫">${ICON.back}</button>
+            <button class="bk-ib" data-act="back" data-edge-back title="回書庫">${ICON.back}</button>
             <h2>好讀</h2>
             <input type="search" class="bk-search" placeholder="搜尋好讀的書名、作者" spellcheck="false">
             <button class="bk-btn" data-act="refresh" title="重新抓好讀的書單">更新書單</button>
@@ -371,7 +371,7 @@ const BooksApp = (() => {
       el.innerHTML = `
         <div class="bk-reader">
           <header class="bk-bar top">
-            <button class="bk-ib" data-act="back" title="回書庫">${ICON.back}</button>
+            <button class="bk-ib" data-act="back" data-edge-back title="回書庫">${ICON.back}</button>
             <div class="bk-title"><b></b><span></span></div>
             <button class="bk-ib" data-act="toc" title="目錄">${ICON.toc}</button>
             <button class="bk-ib" data-act="mark" title="書籤">${ICON.bookmark}</button>

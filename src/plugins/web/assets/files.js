@@ -159,7 +159,7 @@ const FilesApp = (() => {
         <section class="fm-main">
           <header class="fm-bar">
             <div class="fm-nav">
-              <button class="fm-ib" data-act="back" title="上一頁">${ICON.back}</button>
+              <button class="fm-ib" data-act="back" data-edge-back title="上一頁">${ICON.back}</button>
               <button class="fm-ib" data-act="fwd" title="下一頁">${ICON.fwd}</button>
               <button class="fm-ib" data-act="up" title="上一層">${ICON.up}</button>
             </div>

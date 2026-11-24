@@ -115,8 +115,7 @@ const MailApp = (() => {
         <section class="ml-list"><div class="ml-items"></div></section>
         <section class="ml-read"></section>
       </div>
-      <div class="ml-overlay" hidden></div>
-      <div class="ml-edge" aria-hidden="true"></div>`;
+      <div class="ml-overlay" hidden></div>`;
     el.replaceChildren(root);
     const $ = (s) => root.querySelector(s);
     const nodeSel = $(".ml-node");
@@ -575,6 +574,8 @@ const MailApp = (() => {
       const back = h("button", "ml-btn ml-back");
       back.innerHTML = ICON.back;
       back.title = "回到列表";
+      back.dataset.edgeBack = "";
+      back.dataset.edgeEl = ".ml-read";
       back.onclick = closeReader;
       bar.append(back);
       return bar;
@@ -710,6 +711,8 @@ const MailApp = (() => {
       const back = h("button", "ml-btn ml-viewer-back");
       back.innerHTML = `${ICON.back}<span>返回</span>`;
       back.onclick = closeAttachment;
+      back.dataset.edgeBack = "";
+      back.dataset.edgeEl = ".ml-viewer";
       const dl = h("a", "ml-btn ml-viewer-dl");
       dl.href = `${url}?dl=1`;
       dl.download = x.name;
@@ -999,75 +1002,9 @@ const MailApp = (() => {
       const m = items.find((x) => x.id === req.id) || { id: req.id, from: "", subject: "", labels: [], inbox: true, starred: false, unread: true, ts: 0 };
       openMessage(m);
     }
-    // ---- 手機: 從左邊緣往右滑回到上一層 ----
-    // 信件內文在 iframe 裡, 觸控事件不會傳出來, 所以用左邊一條透明的區域接手勢
-    (() => {
-      const edge = $(".ml-edge");
-      let id = null;
-      let sx = 0;
-      let sy = 0;
-      let dx = 0;
-      let active = false;
-      let target = null;
-      const settle = (el) => {
-        el.style.transition = "transform .2s";
-        el.style.transform = "";
-        setTimeout(() => {
-          el.style.transition = "";
-          root.classList.remove("peek");
-        }, 200);
-      };
-      edge.addEventListener("pointerdown", (e) => {
-        id = e.pointerId;
-        sx = e.clientX;
-        sy = e.clientY;
-        dx = 0;
-        active = false;
-        target = viewer ? viewer.el : reader;
-        try {
-          edge.setPointerCapture(id);
-        } catch {}
-      });
-      edge.addEventListener("pointermove", (e) => {
-        if (e.pointerId !== id) return;
-        const x = e.clientX - sx;
-        const y = e.clientY - sy;
-        if (!active) {
-          if (x > 8 && x > Math.abs(y)) {
-            active = true;
-            // 拖動信件時露出底下的列表
-            if (target === reader) root.classList.add("peek");
-          } else if (Math.abs(y) > 12 || x < -8) {
-            id = null;
-            return;
-          } else return;
-        }
-        dx = Math.max(0, x);
-        target.style.transform = `translateX(${dx}px)`;
-      });
-      edge.addEventListener("pointerup", (e) => {
-        if (e.pointerId !== id) return;
-        id = null;
-        if (!active) return;
-        const el = target;
-        if (dx > el.offsetWidth * 0.3) {
-          el.style.transition = "transform .18s";
-          el.style.transform = "translateX(100%)";
-          setTimeout(() => {
-            el.style.transition = "";
-            el.style.transform = "";
-            root.classList.remove("peek");
-            if (el === reader) closeReader();
-            else closeAttachment();
-          }, 180);
-        } else settle(el);
-      });
-      edge.addEventListener("pointercancel", (e) => {
-        if (e.pointerId !== id) return;
-        id = null;
-        if (active) settle(target);
-      });
-    })();
+    // 手機: 從左邊緣往右滑(mobile.js)拖動信件時, 底下露出列表
+    reader.addEventListener("edgeback-start", () => root.classList.add("peek"));
+    reader.addEventListener("edgeback-end", () => root.classList.remove("peek"));
 
     const onKey = (e) => e.key === "Escape" && viewer && closeAttachment();
     root.addEventListener("keydown", onKey);

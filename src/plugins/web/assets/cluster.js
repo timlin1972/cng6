@@ -290,6 +290,7 @@ const ClusterApp = (() => {
       const wrap = h("div", "cl-detail");
       const bar = h("header", "cl-detail-bar");
       const back = h("button", "cl-btn", mobile ? "‹ 返回" : "‹ 所有機器");
+      back.dataset.edgeBack = "";
       const title = h("b", null, n.name);
       const tabs = h("nav", "cl-tabs");
       bar.append(back, title, tabs);

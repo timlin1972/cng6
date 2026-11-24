@@ -849,23 +849,6 @@
   }
 }
 
-/* 從左邊緣往右滑的感應區(只在手機讀信、看附件時) */
-.ml-edge {
-  display: none;
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 16;
-  width: 20px;
-  touch-action: none;
-}
-
-.ml-root[data-device="mobile"].reading .ml-edge,
-.ml-root[data-device="mobile"].viewing .ml-edge {
-  display: block;
-}
-
 .ml-body {
   position: relative;
 }
