@@ -383,7 +383,7 @@ async fn index(
             ),
             (header::VARY, "User-Agent, Sec-CH-UA-Mobile"),
         ],
-        render_page(device),
+        render_page(device, &st.services.cluster.name()),
     )
         .into_response()
 }

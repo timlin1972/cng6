@@ -166,6 +166,14 @@ html {
   font-weight: 700;
 }
 
+#menubar .device {
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 #menubar .active-app {
   font-weight: 600;
 }

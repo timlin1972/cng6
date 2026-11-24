@@ -119,6 +119,11 @@ impl Shared {
         }
     }
 
+    /// 本機在 cluster 裡的名稱(預設 hostname)
+    pub fn name(&self) -> String {
+        self.cfg.read().unwrap().name.clone()
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         let cfg = self.cfg.read().unwrap().clone();
         let st = self.state.read().unwrap();

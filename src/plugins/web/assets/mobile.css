@@ -139,6 +139,27 @@ button {
   display: none;
 }
 
+/* 設備名稱: 在左上角, 有返回鈕時讓位 */
+.m-device {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.m-back:not([hidden]) ~ .m-device {
+  display: none;
+}
+
 .m-back span {
   white-space: nowrap;
   overflow: hidden;

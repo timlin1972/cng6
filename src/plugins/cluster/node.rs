@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sysinfo::{
-    Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System,
+    Components, CpuRefreshKind, DiskRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System,
 };
 
 /// 一台機器的基本狀態
@@ -70,7 +70,9 @@ impl Collector {
                     .with_memory(MemoryRefreshKind::everything()),
             ),
             components: Components::new_with_refreshed_list(),
-            disks: Disks::new_with_refreshed_list(),
+            // 只列出掛載點, 不查容量: WSL 的 /mnt/c 等 Windows 磁碟(9p)
+            // 在 Windows 硬碟休眠或忙碌時 statvfs 會卡住好幾秒
+            disks: Disks::new_with_refreshed_list_specifics(DiskRefreshKind::nothing()),
             networks: Networks::new_with_refreshed_list(),
             started: chrono::Utc::now().timestamp(),
         }
@@ -80,7 +82,15 @@ impl Collector {
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
         self.components.refresh(false);
-        self.disks.refresh(true);
+        // 只更新根目錄的容量, 其他磁碟不碰(見 new())
+        if let Some(d) = self
+            .disks
+            .list_mut()
+            .iter_mut()
+            .find(|d| d.mount_point() == std::path::Path::new("/"))
+        {
+            d.refresh_specifics(DiskRefreshKind::nothing().with_storage());
+        }
         self.networks.refresh(true);
         let load = System::load_average();
         let (disk_used, disk_total) = self
@@ -185,6 +195,8 @@ mod tests {
         let i = c.collect();
         assert!(i.cores > 0);
         assert!(i.mem_total > 0);
+        // 只更新根目錄, 但根目錄的容量要拿得到
+        assert!(i.disk_total > 0);
         assert!(!hostname().is_empty());
     }
 }

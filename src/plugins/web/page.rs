@@ -94,8 +94,9 @@ const SETTINGS_CSS: &str = include_str!("assets/settings.css");
 const SETTINGS_JS: &str = include_str!("assets/settings.js");
 
 /// 依裝置產生頁面
-pub fn render_page(device: Device) -> String {
-    match device {
+pub fn render_page(device: Device, name: &str) -> String {
+    let name = html_escape(name);
+    let html = match device {
         Device::Pc => DESKTOP_HTML
             .replacen("/*CSS*/", DESKTOP_CSS, 1)
             .replacen("/*APPSCSS*/", APPS_CSS, 1)
@@ -140,7 +141,16 @@ pub fn render_page(device: Device) -> String {
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
-    }
+    };
+    // 設備名稱: 放在最後替換, 避免名稱裡剛好有其他的佔位字串
+    html.replace("<!--NAME-->", &name)
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]

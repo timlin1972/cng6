@@ -427,7 +427,7 @@ async fn session(c: &Config, rx: &mut UnboundedReceiver<Cmd>, w: &mut Worker) ->
                     backoff = (backoff * 2).min(60);
                 }
             },
-            _ = tick.tick() => {
+            due = tick.tick() => {
                 let info = w.collector.collect();
                 let connected = state.read().unwrap().connected;
                 state.write().unwrap().nodes.insert(c.name.clone(), self_node(c, &sess, info.clone(), connected));
@@ -435,7 +435,11 @@ async fn session(c: &Config, rx: &mut UnboundedReceiver<Cmd>, w: &mut Worker) ->
                     // QoS 1: broker 限流時最先丟掉 QoS 0, 狀態送不到會被誤認為「沒有回應」
                     let _ = client.try_publish(my_topic.clone(), QoS::AtLeastOnce, true, msg(true, Some(info)));
                 }
-                w.check_alerts(c);
+                // 這個迴圈被耽擱過(例如系統很忙或剛從睡眠醒來)時, 收到的狀態可能還排在後面沒處理,
+                // 這時判斷「沒有回應」會誤報, 等下一輪再檢查
+                if due.elapsed() < Duration::from_secs(3) {
+                    w.check_alerts(c);
+                }
             }
             _ = sync_tick.tick() => {
                 if state.read().unwrap().connected {
