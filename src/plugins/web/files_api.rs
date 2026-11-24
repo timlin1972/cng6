@@ -162,7 +162,7 @@ pub struct RawQuery {
 }
 
 /// Content-Disposition 的檔名(RFC 5987)
-fn disposition(kind: &str, name: &str) -> HeaderValue {
+pub(super) fn disposition(kind: &str, name: &str) -> HeaderValue {
     let ascii: String = name
         .chars()
         .map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' { c } else { '_' })

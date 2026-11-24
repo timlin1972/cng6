@@ -8,6 +8,8 @@ mod books_api;
 mod cli_api;
 mod cluster_api;
 mod files_api;
+mod mail_api;
+pub use mail_api::org_domain;
 mod music_api;
 mod page;
 mod pdfjs;

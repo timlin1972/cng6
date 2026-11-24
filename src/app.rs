@@ -22,12 +22,14 @@ use crate::plugins::{
     books::{self, Books},
     cluster::{self, Cluster},
     files::{self, Files},
+    mail::{self, Mail},
     cli::Cli,
     menu::Menu,
     message::Message,
     music::{self, Music},
     settings::SettingsPanel,
     system::SystemInfo,
+    update::{self, Update},
     wallpaper::{self, Wallpaper},
     weather::{self, Weather},
     web::Web,
@@ -197,6 +199,12 @@ impl App {
             music.clone(),
             wallpaper.clone(),
         )));
+        // 郵件: plugin 在背景連 Gmail(IMAP), web 提供信箱畫面
+        let mail = mail::Shared::new();
+        app.register(Box::new(Mail::new(mail.clone())));
+        // 自動更新: 背景檢查 Git, 有新版時編譯並重新啟動(cluster 傳輸中會延後)
+        let update = update::Shared::new();
+        app.register(Box::new(Update::new(update.clone(), cluster.clone())));
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -207,6 +215,8 @@ impl App {
                 books,
                 files,
                 cluster,
+                update,
+                mail,
             },
         )));
         app

@@ -52,3 +52,6 @@ web_key.pem
 
 # cluster 同步的狀態(執行時產生)
 /cluster-sync.json
+
+# Gmail 帳號與應用程式密碼(權限 600, 不能進 Git)
+/mail-accounts.json

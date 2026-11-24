@@ -1,12 +1,14 @@
 pub mod books;
 pub mod cluster;
 pub mod files;
+pub mod mail;
 pub mod cli;
 pub mod menu;
 pub mod message;
 pub mod music;
 pub mod settings;
 pub mod system;
+pub mod update;
 pub mod wallpaper;
 pub mod weather;
 pub mod web;

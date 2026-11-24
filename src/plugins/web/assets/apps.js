@@ -23,6 +23,8 @@ const Apps = (() => {
     network: `<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>`,
     database: `<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>`,
     bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>`,
+    update: `<path d="M20 11a8 8 0 0 0-14.9-3.9"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.9 3.9"/><path d="M20 20v-4h-4"/><path d="M12 8v7M9 12.5l3 3 3-3"/>`,
+    mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>`,
     folder: `<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
     chart: `<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>`,
     book: `<path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 21.5A2.5 2.5 0 0 1 6.5 19H20v3H6.5"/><path d="M9 7h7"/>`,
@@ -276,4 +278,150 @@ const Apps = (() => {
   }
 
   return { api, ICONS, COLORS, iconSvg, icon, load, find, get list() { return list; }, exec, views, registerView, renderWidgets, mountCard, STATUS_TEXT };
+})();
+
+// ---- 自動更新: 倒數重新啟動的橫幅, 重新啟動後前端程式有變就重新載入 ----
+(() => {
+  let assets = null; // 這個頁面載入時的前端版本
+  let restarting = false; // 曾看到倒數或重新啟動中
+  let deadline = 0;
+  let info = null;
+  let banner = null;
+  let countTimer = null;
+
+  function ensureBanner() {
+    if (banner) return banner;
+    banner = document.createElement("div");
+    banner.className = "upd-banner";
+    banner.setAttribute("role", "status");
+    banner.innerHTML = `<span class="upd-text"></span><button class="upd-now">現在重新啟動</button><button class="upd-cancel">取消</button>`;
+    banner.querySelector(".upd-now").onclick = () => Apps.exec("/update now");
+    banner.querySelector(".upd-cancel").onclick = async () => {
+      await Apps.exec("/update cancel");
+      restarting = false;
+      hide();
+    };
+    document.body.appendChild(banner);
+    return banner;
+  }
+
+  function hide() {
+    clearInterval(countTimer);
+    countTimer = null;
+    if (banner) banner.hidden = true;
+  }
+
+  function show(text, buttons) {
+    const b = ensureBanner();
+    b.hidden = false;
+    b.querySelector(".upd-text").textContent = text;
+    b.querySelector(".upd-now").hidden = !buttons;
+    b.querySelector(".upd-cancel").hidden = !buttons;
+  }
+
+  function render() {
+    const t = info?.target ? `${info.target.short} ${info.target.title}` : "";
+    if (info?.phase === "countdown") {
+      const s = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      show(`新版 ${t}: ${s} 秒後重新啟動`, true);
+    } else if (info?.phase === "deferred") {
+      show(`新版 ${t} 已編譯好, 等傳輸結束後重新啟動`, true);
+    } else if (restarting) {
+      show("重新啟動中, 稍候會自動重新連線…", false);
+    } else hide();
+  }
+
+  async function poll() {
+    if (document.hidden && !restarting) return;
+    let r;
+    try {
+      r = await fetch("/api/update", { cache: "no-store" });
+      if (!r.ok) throw new Error();
+      info = await r.json();
+    } catch {
+      // 重新啟動中連不上
+      if (restarting) render();
+      return;
+    }
+    if (assets === null) assets = info.assets;
+    else if (info.assets !== assets) {
+      // 新版的前端程式: 重新載入
+      location.reload();
+      return;
+    }
+    if (info.phase === "countdown" || info.phase === "restarting") restarting = true;
+    else if (restarting && info.phase !== "deferred") restarting = false;
+    if (info.phase === "countdown") {
+      deadline = Date.now() + (info.remaining_ms || 0);
+      if (!countTimer) countTimer = setInterval(render, 250);
+    } else {
+      clearInterval(countTimer);
+      countTimer = null;
+    }
+    render();
+  }
+
+  poll();
+  setInterval(poll, 2000);
+})();
+
+// ---- 新郵件通知: 右上角跳出, 點一下打開那封信 ----
+(() => {
+  let last = null;
+  let box = null;
+
+  function container() {
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "mail-notes";
+      box.setAttribute("aria-live", "polite");
+      document.body.appendChild(box);
+    }
+    return box;
+  }
+
+  function show(n) {
+    const el = document.createElement("button");
+    el.className = "mail-note";
+    const head = document.createElement("div");
+    head.className = "mail-note-head";
+    head.textContent = `新郵件 · ${n.account}`;
+    const from = document.createElement("div");
+    from.className = "mail-note-from";
+    from.textContent = n.from || "(沒有寄件者)";
+    const subj = document.createElement("div");
+    subj.className = "mail-note-subject";
+    subj.textContent = n.subject || "(沒有主旨)";
+    el.append(head, from, subj);
+    const close = () => {
+      el.classList.add("out");
+      setTimeout(() => el.remove(), 300);
+    };
+    el.onclick = () => {
+      window.MailOpenRequest = { account: n.account, id: n.msg };
+      window.dispatchEvent(new CustomEvent("cng6-mail-open", { detail: window.MailOpenRequest }));
+      if (window.DeskNav) window.DeskNav.openApp("mail");
+      else if (window.MobileNav) window.MobileNav.openApp("mail");
+      close();
+    };
+    container().prepend(el);
+    // 最多同時顯示 3 則
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(close, 12000);
+  }
+
+  async function poll() {
+    if (document.hidden) return;
+    try {
+      const r = await fetch(`/api/mail/notices?after=${last ?? 0}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      // 第一次: 只記住位置, 不顯示舊的通知
+      if (last !== null) d.notices.forEach(show);
+      last = d.last;
+    } catch {}
+  }
+
+  poll();
+  setInterval(poll, 15000);
 })();

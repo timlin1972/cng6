@@ -83,6 +83,9 @@ const BOOKS_JS: &str = include_str!("assets/books.js");
 /// 檔案管理員(PC 與手機共用)
 const FILES_CSS: &str = include_str!("assets/files.css");
 const FILES_JS: &str = include_str!("assets/files.js");
+/// 郵件(PC 與手機共用)
+const MAIL_CSS: &str = include_str!("assets/mail.css");
+const MAIL_JS: &str = include_str!("assets/mail.js");
 /// Cluster(PC 與手機共用)
 const CLUSTER_CSS: &str = include_str!("assets/cluster.css");
 const CLUSTER_JS: &str = include_str!("assets/cluster.js");
@@ -117,6 +120,8 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*BOOKSJS*/", BOOKS_JS, 1)
             .replacen("/*FILESCSS*/", FILES_CSS, 1)
             .replacen("/*FILESJS*/", FILES_JS, 1)
+            .replacen("/*MAILCSS*/", MAIL_CSS, 1)
+            .replacen("/*MAILJS*/", MAIL_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
@@ -138,12 +143,54 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*BOOKSJS*/", BOOKS_JS, 1)
             .replacen("/*FILESCSS*/", FILES_CSS, 1)
             .replacen("/*FILESJS*/", FILES_JS, 1)
+            .replacen("/*MAILCSS*/", MAIL_CSS, 1)
+            .replacen("/*MAILJS*/", MAIL_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
     };
+    // 主畫面圖示直接嵌在頁面裡: iPhone 加到主畫面時由另一個程序下載圖示,
+    // 它不接受自簽憑證(Safari 裡按過信任也一樣), 抓不到就會改用網頁截圖
+    let html = html.replacen(
+        "href=\"/apple-touch-icon.png\"",
+        &format!("href=\"data:image/png;base64,{}\"", touch_icon_b64()),
+        1,
+    );
     // 設備名稱: 放在最後替換, 避免名稱裡剛好有其他的佔位字串
     html.replace("<!--NAME-->", &name)
+}
+
+fn touch_icon_b64() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| base64(include_bytes!("assets/apple-touch-icon.png")))
+}
+
+fn base64(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for c in data.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// 前端程式(HTML / CSS / JS)的版本: 內容的雜湊, 重新編譯後有改變才會不同
+pub fn assets_version() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        render_page(Device::Pc, "").hash(&mut h);
+        render_page(Device::Mobile, "").hash(&mut h);
+        format!("{:016x}", h.finish())
+    })
 }
 
 fn html_escape(s: &str) -> String {
@@ -161,6 +208,15 @@ mod tests {
     const ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36";
     const ANDROID_TABLET: &str = "Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
     const WINDOWS: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+
+    #[test]
+    fn base64_encode() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
 
     #[test]
     fn detect() {

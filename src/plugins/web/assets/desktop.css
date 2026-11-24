@@ -182,7 +182,146 @@ html {
   flex: 1;
 }
 
+/* ---- 時鐘: 按一下顯示月曆與世界時間 ---- */
+.clock-wrap {
+  position: relative;
+}
+
 #menubar .clock {
+  border: 0;
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+#menubar .clock:hover,
+#menubar .clock[aria-expanded="true"] {
+  background: rgba(127, 127, 127, 0.25);
+}
+
+.clock-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 280px;
+  padding: 12px;
+  border-radius: 12px;
+  /* 選單列已有毛玻璃效果, 巢狀的 backdrop-filter 會畫錯, 這裡用不透明背景 */
+  background: var(--menu-bg);
+  border: 0.5px solid var(--win-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-weight: 400;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.cal-head button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.cal-head button:hover {
+  background: rgba(127, 127, 127, 0.2);
+}
+
+.cal-title {
+  flex: 1;
+  padding: 3px 0;
+  font-weight: 600 !important;
+}
+
+.cal-nav {
+  width: 28px;
+  height: 26px;
+  font-size: 18px !important;
+  line-height: 1;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-grid .wd {
+  padding-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.cal-grid .d {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.cal-grid .we {
+  color: var(--text-dim);
+}
+
+.cal-grid .other {
+  opacity: 0.35;
+}
+
+.cal-grid .today {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.wc-list {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--win-border);
+}
+
+.wc-list:empty {
+  display: none;
+}
+
+.wc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+.wc-row .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wc-row .sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.wc-row .tm {
+  font-size: 17px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 

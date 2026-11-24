@@ -119,6 +119,11 @@ impl Shared {
         }
     }
 
+    /// 是否有進行中的遠端請求或檔案傳輸
+    pub fn busy(&self) -> bool {
+        self.bus.busy()
+    }
+
     /// 本機在 cluster 裡的名稱(預設 hostname)
     pub fn name(&self) -> String {
         self.cfg.read().unwrap().name.clone()

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><!--NAME--> · cng6</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>
 // 外觀(系統/淺色/深色): 在畫面出現前套用, 避免閃一下
 try {
@@ -22,6 +24,7 @@ try {
 /*WCCSS*/
 /*BOOKSCSS*/
 /*FILESCSS*/
+/*MAILCSS*/
 /*CLUSTERCSS*/
 </style>
 </head>
@@ -43,7 +46,20 @@ try {
       <button role="menuitemradio" data-theme="dark"><span class="check">✓</span>深色</button>
     </div>
   </div>
-  <span class="clock"></span>
+  <div class="clock-wrap">
+    <button class="clock" aria-haspopup="dialog" aria-expanded="false" title="月曆與世界時間"></button>
+    <div class="clock-pop" role="dialog" aria-label="月曆與世界時間" hidden>
+      <div class="cal">
+        <div class="cal-head">
+          <button class="cal-nav" data-d="-1" aria-label="上個月">‹</button>
+          <button class="cal-title" title="回到這個月"></button>
+          <button class="cal-nav" data-d="1" aria-label="下個月">›</button>
+        </div>
+        <div class="cal-grid"></div>
+      </div>
+      <div class="wc-list"></div>
+    </div>
+  </div>
 </header>
 <main id="desktop"></main>
 <nav id="dock"></nav>
@@ -57,6 +73,7 @@ try {
 /*WCJS*/
 /*BOOKSJS*/
 /*FILESJS*/
+/*MAILJS*/
 /*CLUSTERJS*/
 /*JS*/
 </script>

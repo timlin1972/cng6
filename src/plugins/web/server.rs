@@ -32,13 +32,14 @@ use super::books_api::{self, BooksState};
 use super::cli_api;
 use super::cluster_api;
 use super::files_api::{self, FilesState};
+use super::mail_api;
 use super::music_api;
 use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{books, cluster, files, music, wallpaper, weather, worldclock};
+use crate::plugins::{books, cluster, files, mail, music, update, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -114,6 +115,8 @@ pub struct Services {
     pub books: books::Shared,
     pub files: files::Shared,
     pub cluster: cluster::Shared,
+    pub update: update::Shared,
+    pub mail: mail::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -248,6 +251,22 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
             shared: state.services.files.clone(),
             log: state.log.clone(),
         });
+    let mail = Router::new()
+        .route("/api/mail", get(mail_api::overview))
+        .route("/api/mail/notices", get(mail_api::notices))
+        .route("/api/mail/avatar/{domain}", get(mail_api::avatar))
+        .route("/api/mail/accounts", post(mail_api::add_account))
+        .route("/api/mail/accounts/{name}", axum::routing::delete(mail_api::remove_account))
+        .route("/api/mail/a/{acct}/labels", get(mail_api::labels))
+        .route("/api/mail/a/{acct}/list", get(mail_api::list))
+        .route("/api/mail/a/{acct}/op", post(mail_api::op))
+        .route("/api/mail/a/{acct}/msg/{id}", get(mail_api::message))
+        .route("/api/mail/a/{acct}/msg/{id}/body", get(mail_api::body))
+        .route("/api/mail/a/{acct}/msg/{id}/part/{n}", get(mail_api::part))
+        .with_state(state.services.mail.clone());
+    let update = Router::new()
+        .route("/api/update", get(update_info))
+        .with_state(state.services.update.clone());
     let worldclock = Router::new()
         .route("/api/worldclock", get(worldclock_api::info))
         .with_state(state.services.worldclock.clone());
@@ -277,6 +296,8 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .merge(music)
         .merge(weather)
         .merge(worldclock)
+        .merge(update)
+        .merge(mail)
         .merge(books)
         .merge(files)
 }
@@ -300,6 +321,9 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         });
     let app = Router::new()
         .route("/", get(index))
+        .route("/favicon.svg", get(favicon))
+        .route("/favicon.ico", get(favicon))
+        .route("/apple-touch-icon.png", get(touch_icon))
         .fallback(not_found)
         .with_state(state.clone())
         .merge(api)
@@ -384,6 +408,37 @@ async fn index(
             (header::VARY, "User-Agent, Sec-CH-UA-Mobile"),
         ],
         render_page(device, &st.services.cluster.name()),
+    )
+        .into_response()
+}
+
+/// 自動更新的狀態, 加上前端程式的版本(網頁發現版本變了會重新載入)
+async fn update_info(State(u): State<update::Shared>) -> Response {
+    let mut v = serde_json::to_value(u.snapshot()).unwrap_or_default();
+    v["assets"] = serde_json::Value::String(super::page::assets_version().to_string());
+    axum::Json(v).into_response()
+}
+
+/// 網站圖示: CNG6 (Controller Next Generation Six) 的「6」
+async fn favicon() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_str!("assets/icon.svg"),
+    )
+        .into_response()
+}
+
+/// iPhone / iPad 加到主畫面時的圖示(要 PNG)
+async fn touch_icon() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        &include_bytes!("assets/apple-touch-icon.png")[..],
     )
         .into_response()
 }

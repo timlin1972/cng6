@@ -19,7 +19,7 @@ const CORE = {
   },
 };
 // 自訂畫面的預設大小
-const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720], worldclock: [820, 620], books: [1040, 760], files: [1000, 660], cluster: [900, 640] };
+const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720], worldclock: [820, 620], books: [1040, 760], files: [1000, 660], cluster: [900, 640], mail: [1080, 700] };
 
 let APPS = [];
 
@@ -493,6 +493,18 @@ function buildDock() {
 
 APPS = buildApps([]);
 buildDock();
+
+// 讓其他模組(例如新郵件通知)打開某個 App
+window.DeskNav = {
+  openApp(id) {
+    const app = APPS.find((a) => a.id === id);
+    if (!app) return;
+    const w = wins.get(id);
+    if (!w) openApp(app);
+    else if (w.minimized) unminimize(w);
+    else focusWin(id);
+  },
+};
 Apps.load()
   .then((list) => {
     APPS = buildApps(list);
@@ -527,3 +539,113 @@ function tick() {
 }
 tick();
 setInterval(tick, 1000);
+
+// ---- 時鐘彈出: 月曆 + 世界時鐘的城市 ----
+const clockPop = document.querySelector(".clock-pop");
+const calTitle = clockPop.querySelector(".cal-title");
+const calGrid = clockPop.querySelector(".cal-grid");
+const wcList = clockPop.querySelector(".wc-list");
+let calMonth = null; // 顯示中的月份(該月 1 日)
+let wcZones = [];
+
+function renderCal() {
+  const today = new Date();
+  const y = calMonth.getFullYear();
+  const m = calMonth.getMonth();
+  calTitle.textContent = `${y} 年 ${m + 1} 月`;
+  const first = new Date(y, m, 1).getDay();
+  const start = new Date(y, m, 1 - first);
+  // 固定 6 週, 換月時高度不會跳
+  let html = ["日", "一", "二", "三", "四", "五", "六"].map((w) => `<span class="wd">${w}</span>`).join("");
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const cls = ["d"];
+    if (d.getMonth() !== m) cls.push("other");
+    if (d.getDay() === 0 || d.getDay() === 6) cls.push("we");
+    if (d.toDateString() === today.toDateString()) cls.push("today");
+    html += `<span class="${cls.join(" ")}">${d.getDate()}</span>`;
+  }
+  calGrid.innerHTML = html;
+}
+
+// 某時區相對本機的分鐘差
+function tzOffsetMin(tz, now) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" })
+      .formatToParts(now)
+      .map((x) => [x.type, x.value]),
+  );
+  const there = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+  const here = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
+  return Math.round((there - here) / 60000);
+}
+
+function renderWc() {
+  const now = new Date();
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  wcList.innerHTML = wcZones
+    .map((z) => {
+      let tm = "--:--";
+      let sub = "";
+      try {
+        tm = new Intl.DateTimeFormat("zh-TW", { timeZone: z.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+        const off = tzOffsetMin(z.tz, now);
+        const there = new Date(now.getTime() + off * 60000);
+        const dayDiff = Math.round((new Date(there.toDateString()) - new Date(now.toDateString())) / 86400000);
+        const day = dayDiff === 0 ? "今天" : dayDiff === 1 ? "明天" : dayDiff === -1 ? "昨天" : `${dayDiff > 0 ? "+" : ""}${dayDiff} 天`;
+        const h = off / 60;
+        const hs = off === 0 ? "同時區" : `${off > 0 ? "+" : "−"}${Math.abs(Number.isInteger(h) ? h : h.toFixed(1))} 小時`;
+        sub = `${day}, ${hs}`;
+      } catch {}
+      return `<div class="wc-row"><span class="nm">${esc(z.name)}<span class="sub">${sub}</span></span><span class="tm">${tm}</span></div>`;
+    })
+    .join("");
+}
+
+async function loadWc() {
+  try {
+    const r = await fetch("/api/worldclock");
+    if (r.ok) wcZones = (await r.json()).zones || [];
+  } catch {}
+  if (!clockPop.hidden) renderWc();
+}
+
+let wcTimer = null;
+function toggleClockPop(open) {
+  clockPop.hidden = !open;
+  clock.setAttribute("aria-expanded", String(open));
+  clearInterval(wcTimer);
+  if (open) {
+    const now = new Date();
+    calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    renderCal();
+    renderWc();
+    loadWc(); // 每次打開都重新讀, 世界時鐘的設定可能改過
+    wcTimer = setInterval(() => {
+      renderWc();
+      // 過了午夜, 今天的標記跟著移動
+      if (!calGrid.querySelector(".today") || new Date().getHours() === 0) renderCal();
+    }, 10000);
+  }
+}
+clock.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleClockPop(clockPop.hidden);
+});
+clockPop.querySelectorAll(".cal-nav").forEach((b) =>
+  b.addEventListener("click", () => {
+    calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + Number(b.dataset.d), 1);
+    renderCal();
+  }),
+);
+calTitle.addEventListener("click", () => {
+  const now = new Date();
+  calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  renderCal();
+});
+document.addEventListener("pointerdown", (e) => {
+  if (!clockPop.hidden && !e.target.closest(".clock-wrap")) toggleClockPop(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !clockPop.hidden) toggleClockPop(false);
+});

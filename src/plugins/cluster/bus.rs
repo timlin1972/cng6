@@ -343,6 +343,13 @@ impl Bus {
         }
     }
 
+    /// 是否有進行中的請求或傳輸(自動更新會等它們結束再重新啟動)
+    pub fn busy(&self) -> bool {
+        !self.pending.lock().unwrap().is_empty()
+            || !self.serving.lock().unwrap().is_empty()
+            || !self.feedback.lock().unwrap().is_empty()
+    }
+
     pub fn conn(&self) -> Option<Conn> {
         self.conn.read().unwrap().clone()
     }
