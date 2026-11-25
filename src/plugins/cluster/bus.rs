@@ -41,6 +41,10 @@ const BURST: f64 = 256.0 * 1024.0;
 /// 多久沒收到回報就重送, 最多重送幾次
 const RESEND_AFTER: Duration = Duration::from_secs(5);
 const MAX_RESENDS: u32 = 8;
+/// 還沒確認的資料很少時(例如終端機的輸入、小的回應), 重送的等待從這麼久開始, 每次加長到 RESEND_AFTER:
+/// 一次來回不到 1 秒, broker 偶爾丟掉一則訊息時不用等滿 5 秒
+const RESEND_SMALL: Duration = Duration::from_millis(1500);
+const SMALL: usize = 16 * 1024;
 /// 請求的時間差超過這個就拒絕(防止重放)
 const MAX_SKEW: i64 = 300;
 /// 等待回應的時間
@@ -228,16 +232,20 @@ struct Outgoing<'a> {
     next: u32,
     acked: u32,
     resends: u32,
+    head: Header,
 }
 
 impl<'a> Outgoing<'a> {
-    fn new(conn: &'a Conn, to: &'a str, id: &'a str, kind: Kind, fb: UnboundedReceiver<Fb>) -> Self {
+    /// head: 這段內容的開頭(請求的 Req 或回應的 Res)。broker 可能丟掉它,
+    /// 對方一段都還沒確認時, 重送會連開頭一起送
+    fn new(conn: &'a Conn, to: &'a str, id: &'a str, kind: Kind, fb: UnboundedReceiver<Fb>, head: Header) -> Self {
         Self {
             conn,
             to,
             id,
             kind,
             fb,
+            head,
             buf: VecDeque::new(),
             next: 1,
             acked: 0,
@@ -263,7 +271,13 @@ impl<'a> Outgoing<'a> {
     }
 
     async fn wait(&mut self) -> Result<(), String> {
-        match tokio::time::timeout(RESEND_AFTER, self.fb.recv()).await {
+        let unacked: usize = self.buf.iter().map(|(_, _, d)| d.len()).sum();
+        let after = if unacked <= SMALL {
+            (RESEND_SMALL * (self.resends + 1)).min(RESEND_AFTER)
+        } else {
+            RESEND_AFTER
+        };
+        match tokio::time::timeout(after, self.fb.recv()).await {
             Ok(Some(Fb::Ack(s))) => self.ack(s),
             Ok(Some(Fb::Nack(s))) => {
                 self.ack(s.saturating_sub(1));
@@ -289,6 +303,10 @@ impl<'a> Outgoing<'a> {
         if self.resends > MAX_RESENDS {
             return Err(format!("{} 沒有回應(重送多次失敗)", self.to));
         }
+        // 一段都沒確認: 對方可能沒收到開頭(對方會忽略重複的開頭)
+        if self.acked == 0 {
+            self.conn.send(self.to, &self.head, &[]).await?;
+        }
         for (seq, more, data) in self.buf.clone() {
             self.send_one(seq, more, &data).await?;
         }
@@ -303,6 +321,9 @@ struct Piece {
     kind: Kind,
     data: Bytes,
 }
+
+/// 比 Req 先到的請求內容: (第一段收到的時間, 片段)
+type EarlyBody = (Instant, Vec<(Header, Bytes)>);
 
 /// 正在接收的遠端請求內容
 struct Incoming {
@@ -325,6 +346,8 @@ pub struct Bus {
     cancelled: Mutex<HashSet<String>>,
     /// 處理過的請求(防止重放): from:id → 時間
     seen: Mutex<HashMap<String, i64>>,
+    /// 比 Req 先到的請求內容(broker 可能丟掉或延遲 Req): from:id → (收到時間, 片段)
+    early: Mutex<HashMap<String, EarlyBody>>,
     /// 本機的網頁 API
     router: OnceLock<Router>,
 }
@@ -394,12 +417,12 @@ impl Bus {
             .collect();
         let uri = parts.uri.path_and_query().map_or("/", |p| p.as_str()).to_string();
         let method = parts.method.to_string();
-        conn.send(to, &conn.header(to, &id, 0, true, Kind::Req { method, uri, headers }), &[])
-            .await?;
+        let head = conn.header(to, &id, 0, true, Kind::Req { method, uri, headers });
+        conn.send(to, &head, &[]).await?;
 
         // 請求內容(上傳): 每段標 more, 最後一段(可能是空的)標結束
         {
-            let mut out = Outgoing::new(&conn, to, &id, Kind::Body, fb);
+            let mut out = Outgoing::new(&conn, to, &id, Kind::Body, fb, head);
             let mut stream = body.into_data_stream();
             let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
             let mut total = 0u64;
@@ -419,11 +442,20 @@ impl Bus {
         }
         self.feedback.lock().unwrap().remove(&fb_key);
 
-        // 回應開始
-        let first = tokio::time::timeout(FIRST_TIMEOUT, rx.recv())
-            .await
-            .map_err(|_| format!("{to} 沒有回應(可能離線或還沒更新到支援這個功能的版本)"))?
-            .ok_or("連線中斷")?;
+        // 回應開始。broker 可能讓內容比開頭(Res)先到, 或丟掉開頭(對方會重送): 內容先放著
+        let deadline = tokio::time::Instant::now() + FIRST_TIMEOUT;
+        let mut early: Vec<Piece> = Vec::new();
+        let first = loop {
+            let p = tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .map_err(|_| format!("{to} 沒有回應(可能離線或還沒更新到支援這個功能的版本)"))?
+                .ok_or("連線中斷")?;
+            match p.kind {
+                Kind::Res { .. } | Kind::Err { .. } => break p,
+                Kind::Rbody if early.len() < WINDOW as usize * 4 => early.push(p),
+                _ => {}
+            }
+        };
         let (status, headers) = match first.kind {
             Kind::Res { status, headers } => (status, headers),
             Kind::Err { msg } => return Err(msg),
@@ -437,7 +469,8 @@ impl Bus {
             }
         }
         // 回應內容: 邊收邊給
-        let stream = response_stream(guard, rx, first.more);
+        early.sort_by_key(|p| p.seq);
+        let stream = response_stream(guard, rx, first.more, early);
         res.body(Body::from_stream(stream)).map_err(|e| e.to_string())
     }
 
@@ -494,53 +527,29 @@ impl Bus {
                 }
                 let (tx, rx) = unbounded_channel();
                 self.serving.lock().unwrap().insert(
-                    key,
+                    key.clone(),
                     Incoming {
                         tx,
                         next: 1,
                         nacked: 0,
                     },
                 );
+                let early = self.early.lock().unwrap().remove(&key);
                 let bus = self.clone();
+                let (from, id) = (h.from.clone(), h.id.clone());
+                let c2 = conn.clone();
                 tokio::spawn(async move {
-                    bus.serve(conn, h.from, h.id, method, uri, headers, rx).await;
+                    bus.serve(c2, from, id, method, uri, headers, rx).await;
                 });
-            }
-            Kind::Body => {
-                let mut serving = self.serving.lock().unwrap();
-                let Some(inc) = serving.get_mut(&key) else {
-                    // 已經處理完(例如重送的最後一段): 告訴對方都收到了
-                    if !h.more {
-                        conn.try_send(&h.from, &conn.header(&h.from, &h.id, h.seq, false, Kind::Ack));
+                if let Some((_, frames)) = early {
+                    let mut frames = frames;
+                    frames.sort_by_key(|(h, _)| h.seq);
+                    for (h, data) in frames {
+                        self.on_body(&conn, &key, h, data);
                     }
-                    return;
-                };
-                let reply = |seq: u32, kind: Kind| {
-                    conn.try_send(&h.from, &conn.header(&h.from, &h.id, seq, false, kind));
-                };
-                if h.seq < inc.next {
-                    reply(inc.next - 1, Kind::Ack); // 重複收到: 再回報一次
-                    return;
-                }
-                if h.seq > inc.next {
-                    // 少了一段: 請對方從那段重送(同一段只要求一次)
-                    if inc.nacked != inc.next {
-                        inc.nacked = inc.next;
-                        reply(inc.next, Kind::Nack);
-                    }
-                    return;
-                }
-                inc.next += 1;
-                if !data.is_empty() {
-                    let _ = inc.tx.send(Ok(data));
-                }
-                if h.seq.is_multiple_of(ACK_EVERY) || !h.more {
-                    reply(h.seq, Kind::Ack);
-                }
-                if !h.more {
-                    serving.remove(&key);
                 }
             }
+            Kind::Body => self.on_body(&conn, &key, h, data),
             Kind::Cancel => {
                 self.cancelled.lock().unwrap().insert(key.clone());
                 self.serving.lock().unwrap().remove(&key);
@@ -570,6 +579,57 @@ impl Bus {
     }
 
     // ------------------------------------------------------------ 處理遠端請求
+
+    /// 請求內容的一段
+    fn on_body(&self, conn: &Conn, key: &str, h: Header, data: Bytes) {
+        let mut serving = self.serving.lock().unwrap();
+        let Some(inc) = serving.get_mut(key) else {
+            drop(serving);
+            if self.seen.lock().unwrap().contains_key(key) {
+                // 已經處理完(例如重送的最後一段): 告訴對方都收到了
+                if !h.more {
+                    conn.try_send(&h.from, &conn.header(&h.from, &h.id, h.seq, false, Kind::Ack));
+                }
+            } else {
+                // Req 還沒到(broker 延遲或丟掉了): 先放著, Req 到了再處理
+                let mut early = self.early.lock().unwrap();
+                early.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(30));
+                if early.len() < 64 {
+                    let e = early.entry(key.to_string()).or_insert_with(|| (Instant::now(), Vec::new()));
+                    if e.1.len() < WINDOW as usize * 2 {
+                        e.1.push((h, data));
+                    }
+                }
+            }
+            return;
+        };
+        let reply = |seq: u32, kind: Kind| {
+            conn.try_send(&h.from, &conn.header(&h.from, &h.id, seq, false, kind));
+        };
+        if h.seq < inc.next {
+            reply(inc.next - 1, Kind::Ack); // 重複收到: 再回報一次
+            return;
+        }
+        if h.seq > inc.next {
+            // 少了一段: 請對方從那段重送(同一段只要求一次)
+            if inc.nacked != inc.next {
+                inc.nacked = inc.next;
+                reply(inc.next, Kind::Nack);
+            }
+            return;
+        }
+        inc.next += 1;
+        if !data.is_empty() {
+            let _ = inc.tx.send(Ok(data));
+        }
+        if h.seq.is_multiple_of(ACK_EVERY) || !h.more {
+            reply(h.seq, Kind::Ack);
+        }
+        if !h.more {
+            serving.remove(key);
+        }
+        }
+
 
     #[allow(clippy::too_many_arguments)]
     async fn serve(
@@ -637,7 +697,7 @@ impl Bus {
         if conn.send(&from, &start, &[]).await.is_err() {
             return;
         }
-        let mut out = Outgoing::new(&conn, &from, &id, Kind::Rbody, fb);
+        let mut out = Outgoing::new(&conn, &from, &id, Kind::Rbody, fb, start);
         let mut stream = body.into_data_stream();
         let mut buf: Vec<u8> = Vec::with_capacity(CHUNK);
         let mut total = 0u64;
@@ -680,9 +740,24 @@ fn test_drop(h: &Header) -> bool {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     });
-    every > 0
+    if every > 0
         && matches!(h.kind, Kind::Body | Kind::Rbody)
         && (COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1).is_multiple_of(every)
+    {
+        return true;
+    }
+    // CNG6_TEST_DROP_HEAD=N: 丟掉每第 N 個開頭(Req / Res)
+    static HEAD_EVERY: OnceLock<u64> = OnceLock::new();
+    static HEAD_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let every = *HEAD_EVERY.get_or_init(|| {
+        std::env::var("CNG6_TEST_DROP_HEAD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    });
+    every > 0
+        && matches!(h.kind, Kind::Req { .. } | Kind::Res { .. })
+        && (HEAD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1).is_multiple_of(every)
 }
 
 fn pass_headers(h: &HeaderMap) -> Vec<(String, String)> {
@@ -741,6 +816,7 @@ fn response_stream(
     guard: Pending,
     mut rx: UnboundedReceiver<Piece>,
     more: bool,
+    early: Vec<Piece>,
 ) -> impl tokio_stream::Stream<Item = Result<Bytes, io::Error>> + Send + 'static {
     let (tx, out) = tokio::sync::mpsc::channel::<Result<Bytes, io::Error>>(4);
     tokio::spawn(async move {
@@ -753,8 +829,14 @@ fn response_stream(
         };
         let mut expect = 1;
         let mut nacked = 0;
+        let mut early = early.into_iter();
         loop {
-            let p = match tokio::time::timeout(CHUNK_TIMEOUT, rx.recv()).await {
+            // 比開頭先到的內容先處理
+            let next = match early.next() {
+                Some(p) => Ok(Some(p)),
+                None => tokio::time::timeout(CHUNK_TIMEOUT, rx.recv()).await,
+            };
+            let p = match next {
                 Ok(Some(p)) => p,
                 Ok(None) => {
                     let _ = tx.send(Err(io::Error::other("連線中斷"))).await;

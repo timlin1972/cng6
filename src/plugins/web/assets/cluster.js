@@ -284,7 +284,7 @@ const ClusterApp = (() => {
       alertsEl.append(list);
     }
 
-    // ---- 一台機器的詳細畫面: 狀態 / 指令 / 檔案
+    // ---- 一台機器的詳細畫面: 狀態 / 指令 / 終端機 / 檔案
     function openNode(n, s) {
       closeNode();
       const wrap = h("div", "cl-detail");
@@ -313,10 +313,14 @@ const ClusterApp = (() => {
           const host = h("div", "cl-files");
           body.append(host);
           cleanup = FilesApp.mount(host, { device, base: nodeBase(n.name), node: n.name });
+        } else if (tab === "term") {
+          const host = h("div", "cl-shell");
+          body.append(host);
+          cleanup = TermApp.mount(host, { device, base: nodeBase(n.name), node: n.name });
         }
       };
       // 這台、離線的機器只有狀態
-      const list = reachable(n) && s.connected ? [["status", "狀態"], ["cli", "指令"], ["files", "檔案"]] : [["status", "狀態"]];
+      const list = reachable(n) && s.connected ? [["status", "狀態"], ["cli", "指令"], ["term", "終端機"], ["files", "檔案"]] : [["status", "狀態"]];
       tabs.hidden = list.length < 2;
       for (const [k, label] of list) {
         const b = h("button", "cl-tab", label);

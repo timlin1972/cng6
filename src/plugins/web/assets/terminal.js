@@ -59,9 +59,10 @@ const TermApp = (() => {
     ["^C", "\x03"],
   ];
 
-  function mount(el, { device = "pc" } = {}) {
+  // base / node: 固定開某一台(例如 Cluster 裡那台機器的「終端機」分頁), 不顯示機器選單
+  function mount(el, { device = "pc", base: fixedBase = null, node = null } = {}) {
     const mobile = device === "mobile";
-    let base = "";
+    let base = fixedBase ?? "";
     let term = null;
     let fit = null;
     let sid = null; // 目前接著的終端機
@@ -107,6 +108,7 @@ const TermApp = (() => {
 
     // ---- 機器 ----
     async function loadNodes() {
+      if (fixedBase !== null) return;
       try {
         const s = await req("/api/cluster");
         const others = (s.nodes || []).filter((n) => !n.me && n.online && !n.stale);
@@ -190,9 +192,13 @@ const TermApp = (() => {
       }
     }
 
-    // ---- 鍵盤輸入: 每次輸入馬上送(不等上一個, 遠端時快很多), 伺服器依序號寫入 ----
+    // ---- 鍵盤輸入: 同時只送一個請求, 送出期間打的字合在一起下次送 ----
+    // (遠端時每個請求都要經過 MQTT broker, 一個字一個請求會被限流, 反而很慢)
+    // 序號讓伺服器依順序寫入; 失敗時用同一個序號重送
     const client = Math.random().toString(36).slice(2);
     let seq = 0;
+    let queue = "";
+    let sending = false;
     function send(data) {
       if (sid == null) return;
       if (ctrl && data.length === 1) {
@@ -200,21 +206,28 @@ const TermApp = (() => {
         if (c >= 64 && c <= 95) data = String.fromCharCode(c - 64);
         setCtrl(false);
       }
-      const body = { data, client: `${client}-${sid}`, seq: seq++ };
-      const id = sid;
-      (async () => {
-        // 失敗時用同一個序號重送(伺服器會忽略已經寫過的)
+      queue += data;
+      flush();
+    }
+    async function flush() {
+      if (sending) return;
+      sending = true;
+      while (queue && !closed && sid != null) {
+        const body = { data: queue, client: `${client}-${sid}`, seq: seq++ };
+        queue = "";
+        const id = sid;
         for (let i = 0; i < 4; i++) {
           try {
             await post(api(`/${id}/in`), body);
-            return;
+            break;
           } catch (e) {
-            if (/不在了/.test(e.message)) return;
+            if (/不在了/.test(e.message)) break;
             if (i === 3) setStatus(`送出失敗: ${e.message}`, true);
             else await new Promise((r) => setTimeout(r, 300 * (i + 1)));
           }
         }
-      })();
+      }
+      sending = false;
     }
 
     // ---- 大小 ----

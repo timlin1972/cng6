@@ -513,11 +513,13 @@
 }
 
 .cl-detail-body.tab-files,
+.cl-detail-body.tab-term,
 .cl-detail-body.tab-cli {
   overflow: hidden;
 }
 
-.cl-files {
+.cl-files,
+.cl-shell {
   height: 100%;
 }
 
