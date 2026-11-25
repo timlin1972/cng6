@@ -33,13 +33,14 @@ use super::cli_api;
 use super::cluster_api;
 use super::files_api::{self, FilesState};
 use super::mail_api;
+use super::term_api;
 use super::music_api;
 use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{books, cluster, files, mail, music, update, wallpaper, weather, worldclock};
+use crate::plugins::{books, cluster, files, mail, music, terminal, update, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -117,6 +118,7 @@ pub struct Services {
     pub cluster: cluster::Shared,
     pub update: update::Shared,
     pub mail: mail::Shared,
+    pub terminal: terminal::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -255,6 +257,7 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .route("/api/mail", get(mail_api::overview))
         .route("/api/mail/notices", get(mail_api::notices))
         .route("/api/mail/avatar/{domain}", get(mail_api::avatar))
+        .route("/api/mail/trust", post(mail_api::trust))
         .route("/api/mail/accounts", post(mail_api::add_account))
         .route("/api/mail/accounts/{name}", axum::routing::delete(mail_api::remove_account))
         .route("/api/mail/a/{acct}/labels", get(mail_api::labels))
@@ -264,6 +267,14 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .route("/api/mail/a/{acct}/msg/{id}/body", get(mail_api::body))
         .route("/api/mail/a/{acct}/msg/{id}/part/{n}", get(mail_api::part))
         .with_state(state.services.mail.clone());
+    let term = Router::new()
+        .route("/api/term", get(term_api::list).post(term_api::open))
+        .route("/api/term/{id}", axum::routing::delete(term_api::close))
+        .route("/api/term/{id}/out", get(term_api::output))
+        .route("/api/term/{id}/in", post(term_api::input))
+        .route("/api/term/{id}/resize", post(term_api::resize))
+        .route("/xterm/{name}", get(term_api::xterm_file))
+        .with_state(state.services.terminal.clone());
     let update = Router::new()
         .route("/api/update", get(update_info))
         .with_state(state.services.update.clone());
@@ -298,6 +309,7 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .merge(worldclock)
         .merge(update)
         .merge(mail)
+        .merge(term)
         .merge(books)
         .merge(files)
 }

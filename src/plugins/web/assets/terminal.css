@@ -1,0 +1,96 @@
+/* cng6 終端機(PC 視窗與手機共用) */
+
+.tm-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1e1e1e;
+  color: #e6e6e6;
+  font-size: 13px;
+}
+
+.tm-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #2a2a2c;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tm-top select,
+.tm-btn {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: #333336;
+  color: #e6e6e6;
+  font: inherit;
+}
+
+.tm-top select[hidden] {
+  display: none;
+}
+
+.tm-btn:hover {
+  background: #3d3d41;
+}
+
+.tm-status {
+  flex: 1;
+  text-align: right;
+  color: #a1a1a6;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tm-status.bad {
+  color: #ff8a80;
+}
+
+.tm-screen {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 6px;
+  overflow: hidden;
+}
+
+.tm-screen .xterm {
+  height: 100%;
+}
+
+/* 手機的按鍵列 */
+.tm-keys {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: #2a2a2c;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  scrollbar-width: none;
+}
+
+.tm-keys[hidden] {
+  display: none;
+}
+
+.tm-key {
+  flex: none;
+  min-width: 40px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #3d3d41;
+  color: #fff;
+  font: 600 14px ui-monospace, monospace;
+}
+
+.tm-key.on {
+  background: #0a84ff;
+}

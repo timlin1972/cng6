@@ -33,6 +33,7 @@ zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 mail-parser = { version = "1", features = ["full_encoding"] }
 futures-util = "0.3"
+libc = "0.2"
 
 # 減少 debug 編譯的寫入量(SD 卡在大量寫入時容易卡住)
 [profile.dev]

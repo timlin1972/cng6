@@ -283,6 +283,11 @@ const MailApp = (() => {
 
     async function loadList(silent = false) {
       if (!acct) return;
+      if (pending) {
+        // 背景自動更新: 等送出後再讀, 不然被刪的信會跑回來
+        if (silent) return;
+        await commitPending();
+      }
       if (!silent) {
         itemsEl.replaceChildren(h("div", "ml-empty", "讀取中…"));
         itemsEl.scrollTop = 0;
@@ -503,17 +508,19 @@ const MailApp = (() => {
         }
         return;
       }
-      // 封存、刪除: 滑出去後收起來
+      // 封存、刪除: 滑出去後收起來(3 秒內可以復原)
       inner.style.transition = "transform .2s";
       inner.style.transform = `translateX(${left ? "-" : ""}100%)`;
-      const ok = await op([m.id], act);
-      if (!ok) return reset();
-      toast(act === "trash" ? "已移到垃圾桶" : "已封存");
-      refreshCounts();
       if (stays(act)) {
-        m.inbox = false;
+        // 例如在「所有郵件」裡封存: 信還留著, 直接送出
+        if (await op([m.id], act)) {
+          m.inbox = false;
+          toast("已封存");
+          refreshCounts();
+        }
         return reset();
       }
+      const idx = items.findIndex((x) => x.id === m.id);
       r.style.height = `${r.offsetHeight}px`;
       r.style.transition = "height .2s";
       requestAnimationFrame(() => (r.style.height = "0px"));
@@ -522,6 +529,7 @@ const MailApp = (() => {
         items = items.filter((x) => x.id !== m.id);
         total = Math.max(0, total - 1);
         renderFooter();
+        deferOp(m, act, idx);
       }, 220);
     }
 
@@ -634,19 +642,45 @@ const MailApp = (() => {
       if (info.cc.length) head.append(h("div", "ml-h-to", `副本: ${fmt(info.cc)}`));
 
       const parts = [bar, head];
-      if (info.remote_images && !images) {
+      const trust = async (on) => {
+        try {
+          await req(api("/trust"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ addr: info.from.addr, trust: on }),
+          });
+          info.trusted = on;
+          toast(on ? `以後 ${info.from.addr} 的圖片會直接顯示` : "已取消, 以後要按「顯示圖片」");
+          renderMessage(m, info, on);
+        } catch (e) {
+          toast(`失敗: ${e.message}`, false);
+        }
+      };
+      if (info.remote_images && !images && !info.trusted) {
         const note = h("div", "ml-note");
         note.append(h("span", "", "為了保護隱私, 這封信的外部圖片沒有載入"));
         const show = h("button", "ml-link", "顯示圖片");
         show.onclick = () => renderMessage(m, info, true);
         note.append(show);
+        if (info.from?.addr) {
+          const always = h("button", "ml-link", "一律顯示這個寄件者的圖片");
+          always.onclick = () => trust(true);
+          note.append(always);
+        }
+        parts.push(note);
+      } else if (info.remote_images && info.trusted) {
+        const note = h("div", "ml-note ml-note-quiet");
+        note.append(h("span", "", "這個寄件者的圖片會直接顯示"));
+        const off = h("button", "ml-link", "取消");
+        off.onclick = () => trust(false);
+        note.append(off);
         parts.push(note);
       }
       const frame = document.createElement("iframe");
       frame.className = "ml-frame";
       frame.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
       frame.title = info.subject || "郵件內容";
-      frame.src = acctApi(`/msg/${m.id}/body${images ? "?images=1" : ""}`);
+      frame.src = acctApi(`/msg/${m.id}/body${images || info.trusted ? "?images=1" : ""}`);
       // 依內容調整高度, 由外面的窗格捲動
       // 信件比畫面寬(例如固定 600px 的表格): 像 Gmail app 一樣整封縮小到剛好的寬度, 不用左右滑
       const fit = () => {
@@ -802,8 +836,10 @@ const MailApp = (() => {
     }
 
     async function act(m, what) {
-      const ok = await op([m.id], what);
-      if (!ok) return;
+      const keep0 = stays(what);
+      // 刪除、封存: 先從畫面拿掉, 3 秒內可以復原, 之後才真的送出
+      const later = (what === "trash" || what === "archive") && !keep0;
+      if (!later && !(await op([m.id], what))) return;
       if (what === "unread") {
         m.unread = true;
         itemsEl.querySelector(`.ml-row[data-id="${m.id}"]`)?.classList.add("unread");
@@ -826,9 +862,92 @@ const MailApp = (() => {
       renderList();
       if (next && next !== m) openMessage(next);
       else closeReader();
-      toast({ archive: "已封存", trash: "已移到垃圾桶", inbox: "已移到收件匣" }[what] || "完成");
-      refreshCounts();
+      if (later) deferOp(m, what, idx);
+      else {
+        toast({ archive: "已封存", trash: "已移到垃圾桶", inbox: "已移到收件匣" }[what] || "完成");
+        refreshCounts();
+      }
     }
+
+    // ---- 刪除、封存: 3 秒內可以復原 ----
+    const UNDO_MS = 3000;
+    let pending = null; // { m, what, idx, acct, api, timer }
+
+    function deferOp(m, what, idx) {
+      // 上一個還沒送出的先送
+      if (pending) commitPending();
+      pending = { m, what, idx, acct, api: acctApi("/op"), timer: setTimeout(commitPending, UNDO_MS) };
+      showUndo(what === "trash" ? "已移到垃圾桶" : "已封存");
+    }
+
+    async function commitPending(keepalive = false) {
+      const p = pending;
+      if (!p) return;
+      pending = null;
+      clearTimeout(p.timer);
+      hideUndo();
+      try {
+        const r = await fetch(p.api, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ids: [p.m.id], op: p.what }),
+          keepalive,
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || r.statusText);
+        if (!closed) refreshCounts();
+      } catch (e) {
+        if (closed) return;
+        toast(`失敗: ${e.message}`, false);
+        // 放回列表
+        if (p.acct === acct) restore(p);
+      }
+    }
+
+    function restore(p) {
+      if (items.some((x) => x.id === p.m.id)) return;
+      items.splice(Math.max(0, Math.min(p.idx, items.length)), 0, p.m);
+      total++;
+      renderList();
+    }
+
+    function undo() {
+      const p = pending;
+      if (!p) return;
+      pending = null;
+      clearTimeout(p.timer);
+      hideUndo();
+      if (p.acct === acct) restore(p);
+      toast("已復原");
+    }
+
+    function showUndo(text) {
+      let u = root.querySelector(".ml-undo");
+      if (!u) {
+        u = h("div", "ml-undo");
+        u.append(h("span", "ml-undo-text"));
+        const b = h("button", "ml-undo-btn", "復原");
+        b.onclick = undo;
+        u.append(b, h("i", "ml-undo-bar"));
+        root.append(u);
+      }
+      u.querySelector(".ml-undo-text").textContent = text;
+      // 重新開始倒數的動畫
+      const bar = u.querySelector(".ml-undo-bar");
+      bar.style.animation = "none";
+      void bar.offsetWidth;
+      bar.style.animation = "";
+      u.classList.add("show");
+    }
+
+    function hideUndo() {
+      root.querySelector(".ml-undo")?.classList.remove("show");
+    }
+
+    // 頁面關掉或切到背景: 馬上送出, 不要遺漏
+    const flushNow = () => pending && commitPending(true);
+    window.addEventListener("pagehide", flushNow);
+    const onHidden = () => document.hidden && flushNow();
+    document.addEventListener("visibilitychange", onHidden);
 
     async function op(ids, what) {
       try {
@@ -1032,6 +1151,9 @@ const MailApp = (() => {
       closed = true;
       clearInterval(timer);
       closeAttachment();
+      commitPending(true);
+      window.removeEventListener("pagehide", flushNow);
+      document.removeEventListener("visibilitychange", onHidden);
       window.removeEventListener("cng6-mail-open", onOpen);
     };
   }

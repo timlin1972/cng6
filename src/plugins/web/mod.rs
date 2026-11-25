@@ -15,6 +15,7 @@ mod page;
 mod pdfjs;
 pub mod server;
 mod sysmon;
+mod term_api;
 mod wallpaper_api;
 mod weather_api;
 mod worldclock_api;

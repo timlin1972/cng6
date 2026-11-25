@@ -10,6 +10,7 @@
 //! - GET    /api/mail/a/{acct}/msg/{id}/body   內文(HTML, 放在 iframe 裡; 不執行程式, 預設不載入外部圖片)
 //! - GET    /api/mail/a/{acct}/msg/{id}/part/{n}  附件或內嵌圖片
 //! - POST   /api/mail/a/{acct}/op              {ids, op}: read / unread / star / unstar / archive / inbox / trash
+//! - POST   /api/mail/trust                    {addr, trust}: 這個寄件者的外部圖片一律直接載入
 //! - GET    /api/mail/avatar/{domain}          寄件者公司的圖示(Pi 代抓並快取; 沒有時 404, 前端改用文字頭像)
 
 use axum::Json;
@@ -133,6 +134,8 @@ struct MessageInfo {
     date: i64,
     /// 內文裡有外部圖片(預設不載入)
     remote_images: bool,
+    /// 這個寄件者的外部圖片一律直接載入
+    trusted: bool,
     attachments: Vec<Attachment>,
 }
 
@@ -176,10 +179,13 @@ pub async fn message(State(m): State<Shared>, Path((acct, id)): Path<(String, St
         })
         .collect();
     let html = msg.body_html(0).unwrap_or_default();
+    let from = addrs(msg.from()).into_iter().next();
+    let trusted = from.as_ref().is_some_and(|f| m.is_trusted(&f.addr));
     let info = MessageInfo {
         id,
         subject: msg.subject().unwrap_or("").to_string(),
-        from: addrs(msg.from()).into_iter().next(),
+        from,
+        trusted,
         to: addrs(msg.to()),
         cc: addrs(msg.cc()),
         date: msg.date().map(|d| d.to_timestamp()).unwrap_or(0),
@@ -236,7 +242,8 @@ pub async fn body(
          img{{max-width:100%;height:auto}}pre{{white-space:pre-wrap}}</style></head>\
          <body><div id=\"cng6-mail\">{html}</div></body></html>"
     );
-    let remote = if q.images == 1 { " https: http:" } else { "" };
+    let trusted = addrs(msg.from()).first().is_some_and(|f| m.is_trusted(&f.addr));
+    let remote = if q.images == 1 || trusted { " https: http:" } else { "" };
     let csp = format!(
         "default-src 'none'; img-src 'self' data:{remote}; style-src 'unsafe-inline'{remote}; font-src data:{remote}; \
          sandbox allow-same-origin allow-popups allow-popups-to-escape-sandbox"
@@ -297,6 +304,19 @@ pub async fn part(
         data,
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct TrustBody {
+    addr: String,
+    trust: bool,
+}
+
+pub async fn trust(State(m): State<Shared>, Json(b): Json<TrustBody>) -> Response {
+    match m.set_trusted(&b.addr, b.trust) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
 }
 
 #[derive(Deserialize)]

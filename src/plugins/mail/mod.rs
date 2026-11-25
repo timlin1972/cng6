@@ -23,6 +23,8 @@ use crate::webui::{Button, Card, Status, WebMeta};
 use imap::{Ctl, Job, Out, Request, Summary};
 
 const ACCOUNTS_FILE: &str = "mail-accounts.json";
+/// 外部圖片一律直接載入的寄件者
+const TRUSTED_FILE: &str = "mail-trusted.json";
 /// 保留最近幾則新信通知(給網頁)
 const NOTICES: usize = 50;
 /// 手機列表滑動的動作
@@ -85,6 +87,9 @@ pub struct AccountView {
 
 struct Inner {
     file: PathBuf,
+    trusted_file: PathBuf,
+    /// 外部圖片一律直接載入的寄件者(小寫 email)
+    trusted: RwLock<std::collections::BTreeSet<String>>,
     accounts: RwLock<Vec<Account>>,
     status: RwLock<BTreeMap<String, AccountStatus>>,
     notices: Mutex<VecDeque<Notice>>,
@@ -110,8 +115,15 @@ impl Shared {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        let trusted_file = file.with_file_name(TRUSTED_FILE);
+        let trusted = std::fs::read(&trusted_file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Self(Arc::new(Inner {
             file,
+            trusted_file,
+            trusted: RwLock::new(trusted),
             accounts: RwLock::new(accounts),
             status: RwLock::new(BTreeMap::new()),
             notices: Mutex::new(VecDeque::new()),
@@ -131,6 +143,29 @@ impl Shared {
         if self.0.tx.get().is_none() {
             let _ = self.0.tx.set(imap::spawn(self.clone()));
         }
+    }
+
+    /// 這個寄件者的外部圖片是否一律直接載入
+    pub fn is_trusted(&self, addr: &str) -> bool {
+        !addr.is_empty() && self.0.trusted.read().unwrap().contains(&addr.trim().to_lowercase())
+    }
+
+    pub fn set_trusted(&self, addr: &str, trust: bool) -> Result<(), String> {
+        let addr = addr.trim().to_lowercase();
+        if !addr.contains('@') {
+            return Err("寄件者地址錯誤".into());
+        }
+        let mut t = self.0.trusted.write().unwrap();
+        if trust {
+            t.insert(addr);
+        } else {
+            t.remove(&addr);
+        }
+        let data = serde_json::to_vec_pretty(&*t).map_err(|e| e.to_string())?;
+        let tmp = self.0.trusted_file.with_extension("json.tmp");
+        std::fs::write(&tmp, data)
+            .and_then(|_| std::fs::rename(&tmp, &self.0.trusted_file))
+            .map_err(|e| format!("無法寫入 {}: {e}", self.0.trusted_file.display()))
     }
 
     pub fn accounts(&self) -> Vec<Account> {
@@ -573,6 +608,11 @@ mod tests {
         // 網頁的總覽不能有密碼
         let json = serde_json::to_string(&s2.overview()).unwrap();
         assert!(!json.contains("abcd"));
+        // 外部圖片一律載入的寄件者: 不分大小寫, 會存檔
+        s2.set_trusted("News@Example.com", true).unwrap();
+        assert!(Shared::with_file(dir.join("a.json")).is_trusted("news@example.com"));
+        s2.set_trusted("news@example.com", false).unwrap();
+        assert!(!Shared::with_file(dir.join("a.json")).is_trusted("news@example.com"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

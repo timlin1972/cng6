@@ -86,6 +86,9 @@ const FILES_JS: &str = include_str!("assets/files.js");
 /// 郵件(PC 與手機共用)
 const MAIL_CSS: &str = include_str!("assets/mail.css");
 const MAIL_JS: &str = include_str!("assets/mail.js");
+/// 終端機(PC 與手機共用)
+const TERM_CSS: &str = include_str!("assets/terminal.css");
+const TERM_JS: &str = include_str!("assets/terminal.js");
 /// Cluster(PC 與手機共用)
 const CLUSTER_CSS: &str = include_str!("assets/cluster.css");
 const CLUSTER_JS: &str = include_str!("assets/cluster.js");
@@ -122,6 +125,8 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*FILESJS*/", FILES_JS, 1)
             .replacen("/*MAILCSS*/", MAIL_CSS, 1)
             .replacen("/*MAILJS*/", MAIL_JS, 1)
+            .replacen("/*TERMCSS*/", TERM_CSS, 1)
+            .replacen("/*TERMJS*/", TERM_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
@@ -145,6 +150,8 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*FILESJS*/", FILES_JS, 1)
             .replacen("/*MAILCSS*/", MAIL_CSS, 1)
             .replacen("/*MAILJS*/", MAIL_JS, 1)
+            .replacen("/*TERMCSS*/", TERM_CSS, 1)
+            .replacen("/*TERMJS*/", TERM_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),
@@ -165,7 +172,7 @@ fn touch_icon_b64() -> &'static str {
     V.get_or_init(|| base64(include_bytes!("assets/apple-touch-icon.png")))
 }
 
-fn base64(data: &[u8]) -> String {
+pub(super) fn base64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for c in data.chunks(3) {

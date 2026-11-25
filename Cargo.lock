@@ -373,6 +373,7 @@ dependencies = [
  "encoding_rs",
  "futures-util",
  "hyper-util",
+ "libc",
  "lofty",
  "mail-parser",
  "ratatui",

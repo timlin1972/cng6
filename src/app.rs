@@ -29,6 +29,7 @@ use crate::plugins::{
     music::{self, Music},
     settings::SettingsPanel,
     system::SystemInfo,
+    terminal::{self, Terminal},
     update::{self, Update},
     wallpaper::{self, Wallpaper},
     weather::{self, Weather},
@@ -202,6 +203,9 @@ impl App {
         // 郵件: plugin 在背景連 Gmail(IMAP), web 提供信箱畫面
         let mail = mail::Shared::new();
         app.register(Box::new(Mail::new(mail.clone())));
+        // 終端機: 網頁上的 shell(cluster 也能開別台的)
+        let terminal = terminal::Shared::new();
+        app.register(Box::new(Terminal::new(terminal.clone())));
         // 自動更新: 背景檢查 Git, 有新版時編譯並重新啟動(cluster 傳輸中會延後)
         let update = update::Shared::new();
         app.register(Box::new(Update::new(update.clone(), cluster.clone())));
@@ -217,6 +221,7 @@ impl App {
                 cluster,
                 update,
                 mail,
+                terminal,
             },
         )));
         app

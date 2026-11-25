@@ -19,7 +19,7 @@ const CORE = {
   },
 };
 // 自訂畫面的預設大小
-const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720], worldclock: [820, 620], books: [1040, 760], files: [1000, 660], cluster: [900, 640], mail: [1080, 700] };
+const VIEW_SIZE = { system: [980, 720], music: [1040, 700], weather: [820, 720], worldclock: [820, 620], books: [1040, 760], files: [1000, 660], cluster: [900, 640], mail: [1080, 700], terminal: [900, 560] };
 
 let APPS = [];
 

@@ -8,6 +8,7 @@ pub mod message;
 pub mod music;
 pub mod settings;
 pub mod system;
+pub mod terminal;
 pub mod update;
 pub mod wallpaper;
 pub mod weather;
