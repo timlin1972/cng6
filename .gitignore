@@ -53,6 +53,12 @@ web_key.pem
 # cluster 同步的狀態(執行時產生)
 /cluster-sync.json
 
+# 待辦清單(使用者的資料, 由 cluster 同步)
+/todos.json
+
+# 電子發票(從郵件收集的資料)
+/invoices.json
+
 # Gmail 帳號與應用程式密碼(權限 600, 不能進 Git)
 /mail-accounts.json
 # 外部圖片一律載入的寄件者(執行時產生)

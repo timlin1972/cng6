@@ -508,7 +508,7 @@ const MailApp = (() => {
         }
         return;
       }
-      // 封存、刪除: 滑出去後收起來(3 秒內可以復原)
+      // 封存、刪除: 滑出去後收起來(5 秒內可以復原)
       inner.style.transition = "transform .2s";
       inner.style.transform = `translateX(${left ? "-" : ""}100%)`;
       if (stays(act)) {
@@ -837,7 +837,7 @@ const MailApp = (() => {
 
     async function act(m, what) {
       const keep0 = stays(what);
-      // 刪除、封存: 先從畫面拿掉, 3 秒內可以復原, 之後才真的送出
+      // 刪除、封存: 先從畫面拿掉, 5 秒內可以復原, 之後才真的送出
       const later = (what === "trash" || what === "archive") && !keep0;
       if (!later && !(await op([m.id], what))) return;
       if (what === "unread") {
@@ -869,8 +869,8 @@ const MailApp = (() => {
       }
     }
 
-    // ---- 刪除、封存: 3 秒內可以復原 ----
-    const UNDO_MS = 3000;
+    // ---- 刪除、封存: 5 秒內可以復原 ----
+    const UNDO_MS = 5000;
     let pending = null; // { m, what, idx, acct, api, timer }
 
     function deferOp(m, what, idx) {

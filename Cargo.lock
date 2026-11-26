@@ -378,6 +378,7 @@ dependencies = [
  "mail-parser",
  "ratatui",
  "rcgen",
+ "regex",
  "ring",
  "roxmltree",
  "rumqttc",

@@ -218,7 +218,8 @@ impl Shared {
         self.0.notify.read().unwrap().clone()
     }
 
-    fn push_notice(&self, mut n: Notice) {
+    /// 加一則通知(網頁右上角會跳出, 點了打開那封信); 其他 plugin(例如發票中獎)也用它
+    pub(crate) fn push_notice(&self, mut n: Notice) {
         n.id = self.0.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let from = if n.from.is_empty() { "(沒有寄件者)" } else { &n.from };
         let subject = if n.subject.is_empty() { "(沒有主旨)" } else { &n.subject };

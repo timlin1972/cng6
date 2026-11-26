@@ -1,6 +1,7 @@
 pub mod books;
 pub mod cluster;
 pub mod files;
+pub mod invoice;
 pub mod mail;
 pub mod cli;
 pub mod menu;
@@ -9,6 +10,7 @@ pub mod music;
 pub mod settings;
 pub mod system;
 pub mod terminal;
+pub mod todo;
 pub mod update;
 pub mod wallpaper;
 pub mod weather;

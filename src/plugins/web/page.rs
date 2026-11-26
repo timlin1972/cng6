@@ -89,6 +89,12 @@ const MAIL_JS: &str = include_str!("assets/mail.js");
 /// 終端機(PC 與手機共用)
 const TERM_CSS: &str = include_str!("assets/terminal.css");
 const TERM_JS: &str = include_str!("assets/terminal.js");
+/// 待辦清單(PC 與手機共用)
+const TODO_CSS: &str = include_str!("assets/todo.css");
+const TODO_JS: &str = include_str!("assets/todo.js");
+/// 電子發票(PC 與手機共用)
+const INV_CSS: &str = include_str!("assets/invoice.css");
+const INV_JS: &str = include_str!("assets/invoice.js");
 /// Cluster(PC 與手機共用)
 const CLUSTER_CSS: &str = include_str!("assets/cluster.css");
 const CLUSTER_JS: &str = include_str!("assets/cluster.js");
@@ -127,6 +133,10 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*MAILJS*/", MAIL_JS, 1)
             .replacen("/*TERMCSS*/", TERM_CSS, 1)
             .replacen("/*TERMJS*/", TERM_JS, 1)
+            .replacen("/*TODOCSS*/", TODO_CSS, 1)
+            .replacen("/*TODOJS*/", TODO_JS, 1)
+            .replacen("/*INVCSS*/", INV_CSS, 1)
+            .replacen("/*INVJS*/", INV_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
@@ -152,6 +162,10 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*MAILJS*/", MAIL_JS, 1)
             .replacen("/*TERMCSS*/", TERM_CSS, 1)
             .replacen("/*TERMJS*/", TERM_JS, 1)
+            .replacen("/*TODOCSS*/", TODO_CSS, 1)
+            .replacen("/*TODOJS*/", TODO_JS, 1)
+            .replacen("/*INVCSS*/", INV_CSS, 1)
+            .replacen("/*INVJS*/", INV_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),

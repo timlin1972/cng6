@@ -854,7 +854,7 @@
   font-weight: 700;
 }
 
-/* 3 秒倒數 */
+/* 5 秒倒數(和 mail.js 的 UNDO_MS 一樣) */
 .ml-undo-bar {
   position: absolute;
   left: 0;
@@ -863,7 +863,7 @@
   width: 100%;
   background: #6cb4ff;
   transform-origin: left;
-  animation: ml-undo 3s linear forwards;
+  animation: ml-undo 5s linear forwards;
 }
 
 .ml-undo:not(.show) .ml-undo-bar {

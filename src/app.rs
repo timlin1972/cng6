@@ -22,6 +22,7 @@ use crate::plugins::{
     books::{self, Books},
     cluster::{self, Cluster},
     files::{self, Files},
+    invoice::{self, Invoice},
     mail::{self, Mail},
     cli::Cli,
     menu::Menu,
@@ -30,6 +31,7 @@ use crate::plugins::{
     settings::SettingsPanel,
     system::SystemInfo,
     terminal::{self, Terminal},
+    todo::{self, Todo},
     update::{self, Update},
     wallpaper::{self, Wallpaper},
     weather::{self, Weather},
@@ -191,6 +193,9 @@ impl App {
         // 檔案管理員: plugin 負責設定(根目錄)與回收桶指令, web 提供操作介面
         let files = files::Shared::new();
         app.register(Box::new(Files::new(files.clone())));
+        // 待辦清單: 整個 cluster 共用一份(由 cluster 同步)
+        let todo = todo::Shared::new();
+        app.register(Box::new(Todo::new(todo.clone())));
         // Cluster: plugin 在背景連 MQTT, web 顯示群組裡每台機器的狀態
         let cluster = cluster::Shared::new();
         app.register(Box::new(Cluster::new(
@@ -199,10 +204,14 @@ impl App {
             books.clone(),
             music.clone(),
             wallpaper.clone(),
+            todo.clone(),
         )));
         // 郵件: plugin 在背景連 Gmail(IMAP), web 提供信箱畫面
         let mail = mail::Shared::new();
         app.register(Box::new(Mail::new(mail.clone())));
+        // 電子發票: 從 Gmail 收集, 開獎後自動對獎, 中獎的加到待辦
+        let invoice = invoice::Shared::new(mail.clone(), todo.clone());
+        app.register(Box::new(Invoice::new(invoice.clone())));
         // 終端機: 網頁上的 shell(cluster 也能開別台的)
         let terminal = terminal::Shared::new();
         app.register(Box::new(Terminal::new(terminal.clone())));
@@ -222,6 +231,8 @@ impl App {
                 update,
                 mail,
                 terminal,
+                todo,
+                invoice,
             },
         )));
         app

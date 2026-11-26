@@ -1,4 +1,4 @@
-//! 同步: 書的閱讀進度與書籤、音樂播放清單、天氣與世界時間的城市、桌布設定。
+//! 同步: 書的閱讀進度與書籤、音樂播放清單、天氣與世界時間的城市、桌布設定、待辦清單。
 //!
 //! 每一項是一個保留訊息(retain), 新加入的機器馬上拿到群組目前的資料。
 //! 衝突時以最後修改的為準(時間較新的勝出)。
@@ -22,6 +22,7 @@ use crate::plugins::books;
 use crate::plugins::books::library::Progress;
 use crate::plugins::music;
 use crate::plugins::music::library as mlib;
+use crate::plugins::todo;
 use crate::plugins::wallpaper;
 use crate::remote;
 
@@ -42,6 +43,7 @@ pub struct Deps {
     pub books: books::Shared,
     pub music: music::Shared,
     pub wallpaper: wallpaper::Shared,
+    pub todo: todo::Shared,
     pub remote: remote::Sender,
     /// 目前的設定值與是否為預設值(由 plugin 從 SettingsChanged 更新)
     pub settings: Arc<RwLock<BTreeMap<String, (String, bool)>>>,
@@ -153,6 +155,10 @@ impl Sync {
             let ts = mtime(&mlib::playlist_path(&mdir, &name));
             out.insert(format!("playlist:{name}"), (Value::from(files), ts));
         }
+        // 待辦: 每一項一筆, 時間用它最後修改的時間
+        for (id, v, ts) in self.deps.todo.sync_items() {
+            out.insert(format!("todo:{id}"), (v, ts));
+        }
         let settings = self.deps.settings.read().unwrap();
         for k in SETTING_KEYS {
             if let Some((v, is_default)) = settings.get(*k) {
@@ -179,7 +185,12 @@ impl Sync {
                 None => Known { hash: h.clone(), ts: *natural },
                 Some(k) if k.hash != h => Known {
                     hash: h.clone(),
-                    ts: if key.starts_with("book:") && *natural > k.ts { *natural } else { now.max(k.ts + 1) },
+                    // 閱讀進度、待辦有自己的修改時間, 比較準
+                    ts: if (key.starts_with("book:") || key.starts_with("todo:")) && *natural > k.ts {
+                        *natural
+                    } else {
+                        now.max(k.ts + 1)
+                    },
                 },
                 Some(k) => k.clone(),
             };
@@ -194,11 +205,13 @@ impl Sync {
                 self.dirty = true;
             }
         }
-        // 刪除的播放清單
+        // 刪除的播放清單、待辦
         let deleted: Vec<String> = self
             .known
             .iter()
-            .filter(|(k, v)| k.starts_with("playlist:") && v.hash != DELETED && !items.contains_key(*k))
+            .filter(|(k, v)| {
+                (k.starts_with("playlist:") || k.starts_with("todo:")) && v.hash != DELETED && !items.contains_key(*k)
+            })
             .map(|(k, _)| k.clone())
             .collect();
         for key in deleted {
@@ -315,6 +328,10 @@ impl Sync {
                     Some(format!("同步播放清單: {name}(來自 {})", m.origin))
                 }
             }
+            "todo" => self
+                .deps
+                .todo
+                .apply_sync(name, (!m.value.is_null()).then(|| m.value.clone()), &m.origin),
             "setting" => {
                 if !SETTING_KEYS.contains(&name) {
                     return None;

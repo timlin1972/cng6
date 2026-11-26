@@ -175,6 +175,7 @@ impl Cluster {
         books: books::Shared,
         music: music::Shared,
         wallpaper: wallpaper::Shared,
+        todo: crate::plugins::todo::Shared,
     ) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (log_tx, log) = mpsc::channel();
@@ -186,6 +187,7 @@ impl Cluster {
                 books,
                 music,
                 wallpaper,
+                todo,
                 remote,
                 settings: shared.settings.clone(),
             },

@@ -92,6 +92,10 @@ pub enum Job {
     /// 整封信的原始內容(讀信會標成已讀)
     Raw { id: u64 },
     Op { ids: Vec<u64>, op: Op },
+    /// 在「所有郵件」裡搜尋(Gmail 語法), 回傳信件 id(新到舊)
+    Search { q: String },
+    /// 讀整封信但不標成已讀(例如掃描發票): (id, 收到的時間, 內容)
+    Peek { ids: Vec<u64> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +130,8 @@ pub enum Out {
     Labels(Vec<Label>),
     List(ListPage),
     Raw(Arc<Vec<u8>>),
+    Ids(Vec<u64>),
+    Raws(Vec<(u64, i64, Arc<Vec<u8>>)>),
     Done,
 }
 
@@ -576,6 +582,8 @@ struct Command {
     /// 目前 SELECT 的資料夾
     selected: Option<String>,
     cache: VecDeque<(u64, Arc<Vec<u8>>)>,
+    /// 「所有郵件」裡 信件 id → UID(搜尋時記下, 讀取時不用再找)
+    uids: HashMap<u64, u32>,
 }
 
 async fn command_loop(acct: Account, mut rx: mpsc::UnboundedReceiver<Request>) {
@@ -585,6 +593,7 @@ async fn command_loop(acct: Account, mut rx: mpsc::UnboundedReceiver<Request>) {
         names: Names::default(),
         selected: None,
         cache: VecDeque::new(),
+        uids: HashMap::new(),
     };
     while let Some(r) = rx.recv().await {
         let out = match timeout(JOB_TIMEOUT, c.handle(&r.job)).await {
@@ -665,6 +674,7 @@ impl Command {
         self.names = n;
         self.sess = Some(s);
         self.selected = None;
+        self.uids.clear();
         Ok(())
     }
 
@@ -686,6 +696,68 @@ impl Command {
     async fn run(&mut self, job: &Job) -> Result<Out, String> {
         match job {
             Job::Labels => Ok(Out::Labels(self.names.labels.clone())),
+            Job::Search { q } => {
+                let all = self.names.all.clone();
+                self.select(&all).await?;
+                let s = self.sess()?;
+                let uids = gm_search(s, "", q.trim()).await?;
+                let mut pairs: Vec<(u32, u64)> = Vec::with_capacity(uids.len());
+                for chunk in uids.chunks(500) {
+                    let set: Vec<String> = chunk.iter().map(u32::to_string).collect();
+                    let list: Vec<Fetch> = s
+                        .uid_fetch(set.join(","), "(UID X-GM-MSGID)")
+                        .await
+                        .map_err(e2s)?
+                        .try_collect()
+                        .await
+                        .map_err(e2s)?;
+                    drain(s);
+                    for f in &list {
+                        if let (Some(uid), Some(id)) = (f.uid, f.gmail_msg_id()) {
+                            pairs.push((uid, *id));
+                        }
+                    }
+                }
+                // 新到舊(UID 越大越新)
+                pairs.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
+                for (uid, id) in &pairs {
+                    self.uids.insert(*id, *uid);
+                }
+                let ids: Vec<u64> = pairs.into_iter().map(|(_, id)| id).collect();
+                Ok(Out::Ids(ids))
+            }
+            Job::Peek { ids } => {
+                let all = self.names.all.clone();
+                let known: Vec<u32> = ids.iter().filter_map(|i| self.uids.get(i).copied()).collect();
+                let mut groups: Vec<(String, Vec<u32>)> = Vec::new();
+                if known.len() == ids.len() {
+                    groups.push((all, known));
+                } else {
+                    groups = self.locate(ids).await?;
+                }
+                let mut out = Vec::new();
+                for (mailbox, uids) in groups {
+                    self.select(&mailbox).await?;
+                    let s = self.sess()?;
+                    let set: Vec<String> = uids.iter().map(u32::to_string).collect();
+                    // BODY.PEEK: 不會標成已讀
+                    let list: Vec<Fetch> = s
+                        .uid_fetch(set.join(","), "(UID X-GM-MSGID INTERNALDATE BODY.PEEK[])")
+                        .await
+                        .map_err(e2s)?
+                        .try_collect()
+                        .await
+                        .map_err(e2s)?;
+                    drain(s);
+                    for f in &list {
+                        if let (Some(id), Some(body)) = (f.gmail_msg_id(), f.body()) {
+                            let ts = f.internal_date().map(|d| d.timestamp()).unwrap_or(0);
+                            out.push((*id, ts, Arc::new(body.to_vec())));
+                        }
+                    }
+                }
+                Ok(Out::Raws(out))
+            }
             Job::List { mailbox, q, offset } => {
                 let mailbox = match mailbox {
                     Some(m) if !m.is_empty() => m.clone(),

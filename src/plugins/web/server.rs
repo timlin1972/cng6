@@ -34,13 +34,15 @@ use super::cluster_api;
 use super::files_api::{self, FilesState};
 use super::mail_api;
 use super::term_api;
+use super::todo_api;
+use super::invoice_api;
 use super::music_api;
 use super::page::{detect_device, render_page};
 use super::sysmon::{self, SysMon};
 use super::wallpaper_api::{self, WpState};
 use super::weather_api;
 use super::worldclock_api;
-use crate::plugins::{books, cluster, files, mail, music, terminal, update, wallpaper, weather, worldclock};
+use crate::plugins::{books, cluster, files, invoice, mail, music, terminal, todo, update, wallpaper, weather, worldclock};
 use crate::remote;
 
 /// 啟動伺服器需要的設定
@@ -119,6 +121,8 @@ pub struct Services {
     pub update: update::Shared,
     pub mail: mail::Shared,
     pub terminal: terminal::Shared,
+    pub todo: todo::Shared,
+    pub invoice: invoice::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -275,6 +279,20 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .route("/api/term/{id}/resize", post(term_api::resize))
         .route("/xterm/{name}", get(term_api::xterm_file))
         .with_state(state.services.terminal.clone());
+    let todo = Router::new()
+        .route("/api/todo", get(todo_api::list).post(todo_api::add))
+        .route("/api/todo/clear", post(todo_api::clear))
+        .route("/api/todo/{id}", put(todo_api::update).delete(todo_api::remove))
+        .with_state(state.services.todo.clone());
+    let invoice = Router::new()
+        .route("/api/invoice", get(invoice_api::info))
+        .route("/api/invoice/scan", post(invoice_api::scan))
+        .route("/api/invoice/delete", post(invoice_api::delete))
+        .route("/api/invoice/manual", post(invoice_api::manual))
+        .route("/api/invoice/remove", post(invoice_api::remove))
+        .route("/api/invoice/claimed", post(invoice_api::claimed))
+        .route("/api/invoice/dismiss", post(invoice_api::dismiss))
+        .with_state(state.services.invoice.clone());
     let update = Router::new()
         .route("/api/update", get(update_info))
         .with_state(state.services.update.clone());
@@ -310,6 +328,8 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .merge(update)
         .merge(mail)
         .merge(term)
+        .merge(todo)
+        .merge(invoice)
         .merge(books)
         .merge(files)
 }

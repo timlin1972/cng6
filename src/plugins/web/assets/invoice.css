@@ -1,0 +1,388 @@
+/* cng6 電子發票(PC 視窗與手機共用) */
+
+.iv-root {
+  --iv-bg: #ffffff;
+  --iv-side: #f3f3f6;
+  --iv-line: rgba(0, 0, 0, 0.08);
+  --iv-text: #1d1d1f;
+  --iv-text-2: #6e6e73;
+  --iv-text-3: #a1a1a6;
+  --iv-accent: #0a84ff;
+  --iv-win: #e5484d;
+  --iv-ok: #30a46c;
+  --iv-danger: #d03b3b;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--iv-bg);
+  color: var(--iv-text);
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .iv-root {
+    --iv-bg: #1e1e20;
+    --iv-side: #2a2a2d;
+    --iv-line: rgba(255, 255, 255, 0.08);
+    --iv-text: #f5f5f7;
+    --iv-text-2: #a1a1a6;
+    --iv-text-3: #6e6e73;
+    --iv-danger: #ff6b6b;
+  }
+}
+
+:root[data-theme="dark"] .iv-root {
+  --iv-bg: #1e1e20;
+  --iv-side: #2a2a2d;
+  --iv-line: rgba(255, 255, 255, 0.08);
+  --iv-text: #f5f5f7;
+  --iv-text-2: #a1a1a6;
+  --iv-text-3: #6e6e73;
+  --iv-danger: #ff6b6b;
+}
+
+.iv-root button,
+.iv-root input {
+  font: inherit;
+  color: inherit;
+}
+
+.iv-top {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--iv-line);
+}
+
+.iv-sum {
+  flex: 1 1 220px;
+  color: var(--iv-text-2);
+  font-size: 13px;
+}
+
+.iv-sum.bad {
+  color: var(--iv-danger);
+}
+
+.iv-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.iv-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--iv-line);
+  border-radius: 7px;
+  background: var(--iv-bg);
+}
+
+.iv-btn.primary {
+  border-color: var(--iv-accent);
+  background: var(--iv-accent);
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.iv-filters {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--iv-line);
+}
+
+.iv-chip {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--iv-side);
+  color: var(--iv-text-2) !important;
+}
+
+.iv-chip.on {
+  background: var(--iv-accent);
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.iv-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.iv-ghead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--iv-side);
+  border-bottom: 1px solid var(--iv-line);
+}
+
+.iv-gtitle {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.iv-ginfo {
+  color: var(--iv-text-2);
+  font-size: 12px;
+}
+
+.iv-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--iv-line);
+}
+
+.iv-status {
+  flex: none;
+  width: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 0;
+  border-radius: 8px;
+  background: var(--iv-side);
+  color: var(--iv-text-2);
+  font-size: 12px;
+  text-align: center;
+}
+
+.iv-status b {
+  font-size: 13px;
+}
+
+.s-won .iv-status {
+  background: var(--iv-win);
+  color: #fff;
+}
+
+.s-pending .iv-status,
+.s-waiting .iv-status {
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--iv-accent);
+}
+
+.s-expired .iv-status {
+  opacity: 0.6;
+}
+
+.iv-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.iv-no {
+  font: 600 15px ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.5px;
+}
+
+.s-lost .iv-no,
+.s-expired .iv-no {
+  color: var(--iv-text-2);
+}
+
+.iv-who {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--iv-accent) !important;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+div.iv-who {
+  color: var(--iv-text-2) !important;
+}
+
+.iv-meta {
+  color: var(--iv-text-3);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iv-acts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.s-unknown .iv-acts {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 50%;
+}
+
+.iv-link {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--iv-accent) !important;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.iv-link.danger {
+  color: var(--iv-danger) !important;
+}
+
+.iv-claim {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.iv-deadline {
+  color: var(--iv-win);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.iv-hint {
+  margin: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--iv-side);
+  color: var(--iv-text-2);
+  font-size: 13px;
+}
+
+.iv-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--iv-text-3);
+}
+
+/* 手動加入 */
+.iv-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.iv-overlay[hidden] {
+  display: none;
+}
+
+.iv-dialog {
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: var(--iv-bg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.iv-dialog h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.iv-from {
+  color: var(--iv-text-2);
+  font-size: 12px;
+}
+
+.iv-from:empty {
+  display: none;
+}
+
+.iv-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--iv-text-2);
+  font-size: 12px;
+}
+
+.iv-dialog input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--iv-line);
+  border-radius: 7px;
+  background: var(--iv-side);
+  font-size: 15px;
+}
+
+.iv-err {
+  color: var(--iv-danger);
+  font-size: 13px;
+}
+
+.iv-err[hidden] {
+  display: none;
+}
+
+.iv-dbtns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.iv-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 20;
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 9px;
+  background: rgba(30, 30, 32, 0.92);
+  color: #fff;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+
+.iv-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.iv-toast[data-ok="false"] {
+  background: #c0392b;
+}
+
+.iv-root[data-device="mobile"] .iv-status {
+  width: 64px;
+}
