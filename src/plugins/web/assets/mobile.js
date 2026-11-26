@@ -63,8 +63,8 @@
     titleEl.textContent = p.title;
     const prev = stacks[tab][stacks[tab].length - 2];
     backBtn.hidden = !prev;
-    // 感應區: 有上一頁, 或這一頁是 App(App 裡面可能有上一層, 例如郵件從信回到列表)
-    edge.hidden = !prev && !!CORE[tab];
+    // 感應區: 除了總覽的第一頁, 都可以往回(App 裡的上一層 → 上一頁 → 總覽)
+    edge.hidden = !prev && tab === "overview";
     if (prev) $("span", backBtn).textContent = prev.title;
     document.querySelectorAll(".m-tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     p.onShow && p.onShow();
@@ -126,8 +126,8 @@
     if (!g.active) {
       if (x > 8 && x > Math.abs(y)) {
         g.btn = innerBack();
-        // 沒有上一層也沒有上一頁: 不動
-        if (!g.btn && stacks[tab].length < 2) {
+        // 沒有上一層也沒有上一頁: 其他分頁的第一頁回到總覽, 總覽的第一頁不動
+        if (!g.btn && stacks[tab].length < 2 && tab === "overview") {
           g = null;
           return;
         }
@@ -159,7 +159,8 @@
         resetEl(el);
         done();
         if (cur.btn) cur.btn.click();
-        else pop();
+        else if (stacks[tab].length >= 2) pop();
+        else selectTab("overview");
       }, 180);
     } else {
       el.style.transition = "transform .2s, opacity .2s";
