@@ -262,6 +262,7 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .route("/api/mail/notices", get(mail_api::notices))
         .route("/api/mail/avatar/{domain}", get(mail_api::avatar))
         .route("/api/mail/trust", post(mail_api::trust))
+        .route("/api/mail/pdfpw", get(mail_api::pdf_password).post(mail_api::set_pdf_password))
         .route("/api/mail/accounts", post(mail_api::add_account))
         .route("/api/mail/accounts/{name}", axum::routing::delete(mail_api::remove_account))
         .route("/api/mail/a/{acct}/labels", get(mail_api::labels))

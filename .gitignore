@@ -63,6 +63,8 @@ web_key.pem
 /mail-accounts.json
 # 外部圖片一律載入的寄件者(執行時產生)
 /mail-trusted.json
+# 各寄件者 PDF 附件的密碼(權限 600)
+/mail-pdf-passwords.json
 
 # 個人筆記(使用者自己的檔案)
 /notebook/

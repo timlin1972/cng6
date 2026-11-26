@@ -96,6 +96,12 @@ pub struct Unknown {
     pub subject: String,
     pub from: String,
     pub received: i64,
+    /// 有加密的 PDF 打不開(在郵件裡打開附件時輸入密碼並勾「記住」, 就會再看一次)
+    #[serde(default)]
+    pub locked_pdf: bool,
+    /// 寄件者的 email(在發票頁直接輸入 PDF 密碼用)
+    #[serde(default)]
+    pub from_addr: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -153,6 +159,8 @@ struct Inner {
     progress: Mutex<Progress>,
     /// 要求掃描: Some(true) 全部重新掃描, Some(false) 只看新信
     request: Mutex<Option<bool>>,
+    /// 記住了新的 PDF 密碼: 再看一次找不到號碼的信
+    retry: AtomicBool,
     logs: Mutex<Vec<(bool, String)>>,
     started: AtomicBool,
 }
@@ -208,18 +216,26 @@ impl Shared {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        Self {
+        let me = Self {
             inner: Arc::new(Inner {
                 path,
                 store: Mutex::new(store),
                 progress: Mutex::new(Progress::default()),
                 request: Mutex::new(None),
+                retry: AtomicBool::new(false),
                 logs: Mutex::new(Vec::new()),
                 started: AtomicBool::new(false),
             }),
             mail,
             todo,
-        }
+        };
+        let weak = Arc::downgrade(&me.inner);
+        me.mail.on_pdf_password(Box::new(move || {
+            if let Some(i) = weak.upgrade() {
+                i.retry.store(true, Ordering::Relaxed);
+            }
+        }));
+        me
     }
 
     fn log(&self, warn: bool, text: impl Into<String>) {
@@ -454,8 +470,9 @@ impl Shared {
     async fn worker(self) {
         let mut last_rss: Option<Instant> = None;
         let mut last_scan: Option<Instant> = None;
-        // 啟動後先等郵件連線
+        // 啟動後先等郵件連線; 找不到號碼的信再看一次(之前的版本沒有記錄 PDF 有沒有密碼)
         tokio::time::sleep(Duration::from_secs(20)).await;
+        self.inner.retry.store(true, Ordering::Relaxed);
         loop {
             // 中獎號碼: 平常每 6 小時; 開獎日(單數月 25 日)下午每 15 分鐘, 直到新的一期出來
             let t = chrono::Local::now();
@@ -474,6 +491,14 @@ impl Shared {
                 last_rss = Some(Instant::now());
                 self.fetch_winning().await;
             }
+            // 記住了新的 PDF 密碼: 再看一次找不到號碼的信
+            if self.inner.retry.swap(false, Ordering::Relaxed) {
+                for a in self.mail.accounts() {
+                    if let Err(e) = self.retry_unknown(&a.name).await {
+                        self.log(true, format!("[{}] 重新檢查失敗: {e}", a.name));
+                    }
+                }
+            }
             // 掃描信件
             let req = self.inner.request.lock().unwrap().take();
             let accounts: Vec<String> = self.mail.accounts().into_iter().map(|a| a.name).collect();
@@ -491,7 +516,7 @@ impl Shared {
             self.notify();
             // 每秒看一下有沒有手動要求
             for _ in 0..60 {
-                if self.inner.request.lock().unwrap().is_some() {
+                if self.inner.request.lock().unwrap().is_some() || self.inner.retry.load(Ordering::Relaxed) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -576,12 +601,7 @@ impl Shared {
                     return Err(e);
                 }
             };
-            // 解析(PDF 轉文字會花一點時間, 放到 blocking thread)
-            let parsed = tokio::task::spawn_blocking(move || {
-                raws.into_iter().map(|(id, ts, raw)| (id, ts, parse::scan(&raw, ts))).collect::<Vec<_>>()
-            })
-            .await
-            .unwrap_or_default();
+            let parsed = self.parse_all(raws).await;
             let mut s = self.inner.store.lock().unwrap();
             for (id, ts, sc) in parsed {
                 let msg = id.to_string();
@@ -653,6 +673,8 @@ impl Shared {
                         subject: sc.subject,
                         from: sc.from,
                         received: ts,
+                        locked_pdf: sc.locked_pdf,
+                        from_addr: sc.from_addr,
                     });
                 }
             }
@@ -674,6 +696,76 @@ impl Shared {
         }
         if full || found > 0 {
             self.log(false, format!("[{account}] 掃描完成, 新增 {found} 張發票"));
+        }
+        Ok(())
+    }
+
+    /// 解析信件(PDF 轉文字會花一點時間, 放到 blocking thread); 有密碼的 PDF 用記住的密碼
+    async fn parse_all(&self, raws: Vec<(u64, i64, Arc<Vec<u8>>)>) -> Vec<(u64, i64, parse::Scanned)> {
+        let mail = self.mail.clone();
+        tokio::task::spawn_blocking(move || {
+            let pw = |addr: &str| mail.pdf_password(addr);
+            raws.into_iter().map(|(id, ts, raw)| (id, ts, parse::scan(&raw, ts, &pw))).collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// 再看一次找不到號碼的信(例如記住了 PDF 密碼): 找到發票就移到清單
+    async fn retry_unknown(&self, account: &str) -> Result<(), String> {
+        let ids: Vec<u64> = {
+            let s = self.inner.store.lock().unwrap();
+            s.unknown.iter().filter(|u| u.account == account).filter_map(|u| u.msg.parse().ok()).collect()
+        };
+        let mut found = 0;
+        for chunk in ids.chunks(BATCH) {
+            let raws = match self.mail.request(account, Job::Peek { ids: chunk.to_vec() }).await? {
+                Out::Raws(v) => v,
+                _ => continue,
+            };
+            let parsed = self.parse_all(raws).await;
+            let mut s = self.inner.store.lock().unwrap();
+            for (id, ts, sc) in parsed {
+                let msg = id.to_string();
+                if sc.invoices.is_empty() {
+                    if let Some(u) = s.unknown.iter_mut().find(|u| u.account == account && u.msg == msg) {
+                        u.locked_pdf = sc.locked_pdf;
+                        u.from_addr = sc.from_addr.clone();
+                    }
+                    continue;
+                }
+                s.unknown.retain(|u| !(u.account == account && u.msg == msg));
+                for f in &sc.invoices {
+                    if s.records.iter().any(|r| r.number == f.number && r.period == f.period.key()) {
+                        continue;
+                    }
+                    found += 1;
+                    s.records.push(Record {
+                        key: format!("{account}:{msg}:{}", f.number),
+                        account: account.to_string(),
+                        msg: Some(msg.clone()),
+                        number: f.number.clone(),
+                        period: f.period.key(),
+                        date: f.date.map(|d| d.to_string()),
+                        amount: f.amount,
+                        seller: sc.from.clone(),
+                        subject: sc.subject.clone(),
+                        received: ts,
+                        manual: false,
+                        claimed: false,
+                        notified: 0,
+                        todo: None,
+                        notice_prize: None,
+                        notice_amount: None,
+                        auto_deposit: false,
+                        mail_gone: false,
+                    });
+                }
+            }
+            self.save(&s);
+        }
+        if found > 0 {
+            self.log(false, format!("[{account}] 用記住的 PDF 密碼找到 {found} 張發票"));
         }
         Ok(())
     }

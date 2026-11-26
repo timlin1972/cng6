@@ -343,6 +343,17 @@ div.iv-who {
   font-size: 15px;
 }
 
+.iv-locked {
+  margin-top: 2px;
+  color: #b7791f;
+  font-size: 12px;
+}
+
+.iv-hint2 {
+  color: var(--iv-text-3);
+  font-size: 12px;
+}
+
 .iv-err {
   color: var(--iv-danger);
   font-size: 13px;

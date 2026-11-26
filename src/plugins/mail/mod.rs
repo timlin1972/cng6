@@ -25,6 +25,8 @@ use imap::{Ctl, Job, Out, Request, Summary};
 const ACCOUNTS_FILE: &str = "mail-accounts.json";
 /// 外部圖片一律直接載入的寄件者
 const TRUSTED_FILE: &str = "mail-trusted.json";
+/// 各寄件者 PDF 附件的密碼(例如帳單用身分證字號當密碼; 權限 600)
+const PDF_PW_FILE: &str = "mail-pdf-passwords.json";
 /// 保留最近幾則新信通知(給網頁)
 const NOTICES: usize = 50;
 /// 手機列表滑動的動作
@@ -90,6 +92,11 @@ struct Inner {
     trusted_file: PathBuf,
     /// 外部圖片一律直接載入的寄件者(小寫 email)
     trusted: RwLock<std::collections::BTreeSet<String>>,
+    pdf_pw_file: PathBuf,
+    /// 寄件者(小寫 email) → PDF 密碼
+    pdf_pw: RwLock<BTreeMap<String, String>>,
+    /// 記住新的 PDF 密碼時通知(發票會重新看找不到號碼的信)
+    pdf_hook: OnceLock<Box<dyn Fn() + Send + Sync>>,
     accounts: RwLock<Vec<Account>>,
     status: RwLock<BTreeMap<String, AccountStatus>>,
     notices: Mutex<VecDeque<Notice>>,
@@ -120,10 +127,18 @@ impl Shared {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        let pdf_pw_file = file.with_file_name(PDF_PW_FILE);
+        let pdf_pw = std::fs::read(&pdf_pw_file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Self(Arc::new(Inner {
             file,
             trusted_file,
             trusted: RwLock::new(trusted),
+            pdf_pw_file,
+            pdf_pw: RwLock::new(pdf_pw),
+            pdf_hook: OnceLock::new(),
             accounts: RwLock::new(accounts),
             status: RwLock::new(BTreeMap::new()),
             notices: Mutex::new(VecDeque::new()),
@@ -166,6 +181,39 @@ impl Shared {
         std::fs::write(&tmp, data)
             .and_then(|_| std::fs::rename(&tmp, &self.0.trusted_file))
             .map_err(|e| format!("無法寫入 {}: {e}", self.0.trusted_file.display()))
+    }
+
+    /// 這個寄件者的 PDF 密碼
+    pub fn pdf_password(&self, addr: &str) -> Option<String> {
+        self.0.pdf_pw.read().unwrap().get(&addr.trim().to_lowercase()).cloned()
+    }
+
+    /// 記住(或用空字串忘記)這個寄件者的 PDF 密碼
+    pub fn set_pdf_password(&self, addr: &str, password: &str) -> Result<(), String> {
+        let addr = addr.trim().to_lowercase();
+        if !addr.contains('@') {
+            return Err("寄件者地址錯誤".into());
+        }
+        {
+            let mut m = self.0.pdf_pw.write().unwrap();
+            if password.is_empty() {
+                m.remove(&addr);
+            } else {
+                m.insert(addr, password.to_string());
+            }
+            write_private(&self.0.pdf_pw_file, &serde_json::to_vec_pretty(&*m).map_err(|e| e.to_string())?)?;
+        }
+        if !password.is_empty()
+            && let Some(f) = self.0.pdf_hook.get()
+        {
+            f();
+        }
+        Ok(())
+    }
+
+    /// 記住新的 PDF 密碼時要做的事(只能設定一次)
+    pub fn on_pdf_password(&self, f: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.0.pdf_hook.set(f);
     }
 
     pub fn accounts(&self) -> Vec<Account> {
@@ -336,21 +384,26 @@ impl Shared {
 
     /// 存檔: 只有自己能讀(權限 600)
     fn save(&self, list: &[Account]) -> Result<(), String> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let tmp = self.0.file.with_extension("json.tmp");
         let data = serde_json::to_vec_pretty(list).map_err(|e| e.to_string())?;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| format!("無法寫入 {}: {e}", tmp.display()))?;
-        f.write_all(&data).map_err(|e| e.to_string())?;
-        drop(f);
-        std::fs::rename(&tmp, &self.0.file).map_err(|e| e.to_string())
+        write_private(&self.0.file, &data)
     }
+}
+
+/// 寫入只有自己能讀的檔案(權限 600; 先寫暫存檔再改名)
+fn write_private(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension("json.tmp");
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("無法寫入 {}: {e}", tmp.display()))?;
+    f.write_all(data).map_err(|e| e.to_string())?;
+    drop(f);
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 pub struct Mail {
@@ -360,9 +413,11 @@ pub struct Mail {
 impl Mail {
     pub fn new(shared: Shared) -> Self {
         // 舊檔案的權限可能太寬: 修正成 600
-        if shared.0.file.exists() {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&shared.0.file, std::fs::Permissions::from_mode(0o600));
+        for f in [&shared.0.file, &shared.0.pdf_pw_file] {
+            if f.exists() {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o600));
+            }
         }
         if !shared.accounts().is_empty() {
             shared.start();
@@ -614,6 +669,13 @@ mod tests {
         assert!(Shared::with_file(dir.join("a.json")).is_trusted("news@example.com"));
         s2.set_trusted("news@example.com", false).unwrap();
         assert!(!Shared::with_file(dir.join("a.json")).is_trusted("news@example.com"));
+        // PDF 密碼: 只有自己能讀, 不分大小寫, 空的表示忘記
+        s2.set_pdf_password("Bill@Taipower.com.tw", "A123456789").unwrap();
+        let mode = std::fs::metadata(dir.join(PDF_PW_FILE)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(Shared::with_file(dir.join("a.json")).pdf_password("bill@taipower.com.tw").as_deref(), Some("A123456789"));
+        s2.set_pdf_password("bill@taipower.com.tw", "").unwrap();
+        assert!(Shared::with_file(dir.join("a.json")).pdf_password("bill@taipower.com.tw").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -38,6 +38,10 @@ pub struct Win {
 pub struct Scanned {
     pub subject: String,
     pub from: String,
+    /// 寄件者的 email(找 PDF 密碼用)
+    pub from_addr: String,
+    /// 有加密的 PDF 打不開(沒有密碼或密碼不對)
+    pub locked_pdf: bool,
     pub invoices: Vec<Found>,
     /// 財政部的中獎通知: 中獎的發票(可能是悠遊卡等其他載具的, 不一定有 email)
     pub wins: Vec<Win>,
@@ -127,18 +131,18 @@ pub fn find_in_text(text: &str, received: NaiveDate) -> Vec<Found> {
     out
 }
 
-/// PDF → 文字(用 poppler 的 pdftotext; 沒有安裝就略過)
-fn pdf_text(data: &[u8]) -> Option<String> {
+/// PDF → 文字(用 poppler 的 pdftotext; 沒有安裝就略過)。有密碼的 PDF 用 password 打開
+fn pdf_text(data: &[u8], password: Option<&str>) -> Option<String> {
     let dir = std::env::temp_dir().join(format!("cng6-inv-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{:x}.pdf", data.len() ^ data.iter().take(64).map(|b| *b as usize).sum::<usize>()));
     std::fs::write(&path, data).ok()?;
-    let out = std::process::Command::new("pdftotext")
-        .args(["-layout", "-q"])
-        .arg(&path)
-        .arg("-")
-        .stdin(std::process::Stdio::null())
-        .output();
+    let mut cmd = std::process::Command::new("pdftotext");
+    cmd.args(["-layout", "-q"]);
+    if let Some(pw) = password {
+        cmd.arg("-upw").arg(pw);
+    }
+    let out = cmd.arg(&path).arg("-").stdin(std::process::Stdio::null()).output();
     let _ = std::fs::remove_file(&path);
     let out = out.ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -167,8 +171,8 @@ fn raw_header_big5(raw: &[u8], name: &str) -> Option<String> {
     (!bad).then(|| s.trim().to_string())
 }
 
-/// 掃描一封信
-pub fn scan(raw: &[u8], received: i64) -> Scanned {
+/// 掃描一封信; password: 寄件者 → PDF 密碼
+pub fn scan(raw: &[u8], received: i64, password: &dyn Fn(&str) -> Option<String>) -> Scanned {
     let mut r = Scanned::default();
     let Some(msg) = MessageParser::new().parse(raw) else {
         return r;
@@ -179,6 +183,12 @@ pub fn scan(raw: &[u8], received: i64) -> Scanned {
         .and_then(|l| l.first())
         .map(|a| a.name().or(a.address()).unwrap_or("").to_string())
         .unwrap_or_default();
+    r.from_addr = msg
+        .from()
+        .and_then(|l| l.first())
+        .and_then(|a| a.address().map(|s| s.to_lowercase()))
+        .unwrap_or_default();
+    let pdf_pw = password(&r.from_addr);
     if r.subject.contains('\u{FFFD}')
         && let Some(s) = raw_header_big5(raw, "Subject")
     {
@@ -208,8 +218,10 @@ pub fn scan(raw: &[u8], received: i64) -> Scanned {
         let data = p.decoded();
         if ct == "application/pdf" || name.ends_with(".pdf") || data.starts_with(b"%PDF") {
             has_pdf = true;
-            if let Some(t) = pdf_text(&data) {
-                texts.push(t);
+            // 先不用密碼, 打不開再用記住的密碼
+            match pdf_text(&data, None).or_else(|| pdf_text(&data, pdf_pw.as_deref())) {
+                Some(t) => texts.push(t),
+                None => r.locked_pdf = true,
             }
         } else if ct == "text/html" || name.ends_with(".html") || name.ends_with(".htm") {
             texts.push(mail_parser::html_to_text(&String::from_utf8_lossy(&p.text().map(|t| t.into_owned().into_bytes()).unwrap_or_else(|| data.to_vec()))));
@@ -307,7 +319,7 @@ mod tests {
 Content-Type: text/html; charset=utf-8\r\n\r\n<p>\u{60a8}\u{7684}\u{624b}\u{6a5f}\u{689d}\u{78bc}\u{5df2}\u{555f}\u{7528}\u{81ea}\u{52d5}\u{532f}\u{6b3e}</p>\
 <table><tr><td>發票號碼</td><td>中獎獎別</td><td>中獎金額</td><td>載具類別</td></tr>\
 <tr><td>CU8****435</td><td>雲端發票專屬五百元獎</td><td>500</td><td>悠遊卡</td></tr></table>\r\n";
-        let s = scan(raw.as_bytes(), 1_790_000_000);
+        let s = scan(raw.as_bytes(), 1_790_000_000, &|_| None);
         assert_eq!(s.wins.len(), 1, "{s:?}");
         assert_eq!(s.wins[0].number, "CU8****435");
         assert_eq!(s.wins[0].prize, "雲端發票專屬五百元獎");
@@ -323,19 +335,43 @@ Content-Type: text/html; charset=utf-8\r\n\r\n<p>\u{60a8}\u{7684}\u{624b}\u{6a5f
         let mut raw = b"From: shop@example.com\r\nSubject: ".to_vec();
         raw.extend_from_slice(&b);
         raw.extend_from_slice(b"\r\n\r\nhi\r\n");
-        let s = scan(&raw, 1_790_000_000);
+        let s = scan(&raw, 1_790_000_000, &|_| None);
         assert_eq!(s.subject, "訂購確認");
+    }
+
+    /// 有密碼的 PDF(用 Ghostscript 產生, 沒有就略過這個測試)
+    #[test]
+    fn locked_pdf() {
+        let dir = std::env::temp_dir().join(format!("cng6-lockpdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ps = dir.join("a.ps");
+        std::fs::write(&ps, "%!PS\n/Helvetica findfont 12 scalefont setfont 72 700 moveto (Invoice AB-12345678 115/09/10) show showpage\n").unwrap();
+        let pdf = dir.join("a.pdf");
+        let ok = std::process::Command::new("gs")
+            .args(["-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite", "-sOwnerPassword=o", "-sUserPassword=pw1", "-dEncryptionR=3", "-dKeyLength=128"])
+            .arg(format!("-sOutputFile={}", pdf.display()))
+            .arg(&ps)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok || std::process::Command::new("pdftotext").arg("-v").output().is_err() {
+            return;
+        }
+        let data = std::fs::read(&pdf).unwrap();
+        assert!(pdf_text(&data, None).is_none());
+        assert!(pdf_text(&data, Some("bad")).is_none());
+        assert!(pdf_text(&data, Some("pw1")).unwrap().contains("AB-12345678"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn whole_message() {
         let raw = "From: PChome <a@pchome.com.tw>\r\nSubject: 發票開立通知\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>發票號碼：<b>JK-24681357</b></p><p>發票日期：2026-09-30</p>\r\n";
-        let s = scan(raw.as_bytes(), 1_790_000_000);
+        let s = scan(raw.as_bytes(), 1_790_000_000, &|_| None);
         assert_eq!(s.subject, "發票開立通知");
         assert_eq!(s.invoices.len(), 1);
         assert_eq!(s.invoices[0].period, Period { roc: 115, month: 9 });
         let raw = "From: x@y.com\r\nSubject: 您的電子發票\r\n\r\n請見附件\r\n";
-        let s = scan(raw.as_bytes(), 1_790_000_000);
+        let s = scan(raw.as_bytes(), 1_790_000_000, &|_| None);
         assert!(s.invoices.is_empty() && s.likely);
     }
 }

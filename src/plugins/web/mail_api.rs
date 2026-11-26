@@ -11,6 +11,8 @@
 //! - GET    /api/mail/a/{acct}/msg/{id}/part/{n}  附件或內嵌圖片
 //! - POST   /api/mail/a/{acct}/op              {ids, op}: read / unread / star / unstar / archive / inbox / trash
 //! - POST   /api/mail/trust                    {addr, trust}: 這個寄件者的外部圖片一律直接載入
+//! - GET    /api/mail/pdfpw?addr=              這個寄件者記住的 PDF 密碼
+//! - POST   /api/mail/pdfpw                    {addr, password}: 記住(空的表示忘記)
 //! - GET    /api/mail/avatar/{domain}          寄件者公司的圖示(Pi 代抓並快取; 沒有時 404, 前端改用文字頭像)
 
 use axum::Json;
@@ -314,6 +316,32 @@ pub struct TrustBody {
 
 pub async fn trust(State(m): State<Shared>, Json(b): Json<TrustBody>) -> Response {
     match m.set_trusted(&b.addr, b.trust) {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddrQuery {
+    addr: String,
+}
+
+pub async fn pdf_password(State(m): State<Shared>, Query(q): Query<AddrQuery>) -> Response {
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        Json(serde_json::json!({ "password": m.pdf_password(&q.addr) })),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct PdfPwBody {
+    addr: String,
+    password: String,
+}
+
+pub async fn set_pdf_password(State(m): State<Shared>, Json(b): Json<PdfPwBody>) -> Response {
+    match m.set_pdf_password(&b.addr, &b.password) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
     }

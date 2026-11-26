@@ -54,6 +54,8 @@ const InvoiceApp = (() => {
     let filter = "all";
     let closed = false;
     let busy = false;
+    // 手動開始的掃描: 掃完要提示(記下開始前的狀態, 比較差多少)
+    let watching = null;
 
     const root = h("div", "iv-root");
     root.dataset.device = device;
@@ -86,26 +88,58 @@ const InvoiceApp = (() => {
     }
 
     let toastTimer = null;
-    function toast(text, ok = true) {
+    function toast(text, ok = true, ms = 2600) {
       const t = $(".iv-toast");
       t.textContent = text;
       t.dataset.ok = ok;
       t.classList.add("show");
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+      toastTimer = setTimeout(() => t.classList.remove("show"), ms);
     }
 
-    $(".iv-scan").onclick = async () => {
-      await req("/api/invoice/scan", { full: false }).catch((e) => toast(e.message, false));
-      toast("檢查新的信…");
-      setTimeout(load, 1500);
+    async function startScan(full) {
+      try {
+        await req("/api/invoice/scan", { full });
+      } catch (e) {
+        return toast(e.message, false);
+      }
+      watching = {
+        full,
+        last: data?.progress.last ?? null,
+        items: data?.items.length ?? 0,
+        unknown: data?.unknown.length ?? 0,
+        since: Date.now(),
+      };
+      toast(full ? "開始重新掃描…" : "檢查新的信…");
+      tick(1500);
+    }
+    $(".iv-scan").onclick = () => startScan(false);
+    $(".iv-full").onclick = () => {
+      if (!confirm("全部重新掃描?(找到的發票會保留; 信已經刪除的會從清單移除)")) return;
+      startScan(true);
     };
-    $(".iv-full").onclick = async () => {
-      if (!confirm("全部重新掃描?(已經找到的發票會保留, 第一次掃描過的信也會再看一次)")) return;
-      await req("/api/invoice/scan", { full: true }).catch((e) => toast(e.message, false));
-      toast("開始重新掃描…");
-      setTimeout(load, 1500);
-    };
+
+    // 手動開始的掃描結束了: 提示結果
+    function checkDone() {
+      if (!watching || !data) return;
+      const p = data.progress;
+      const finished = !p.running && p.last !== watching.last;
+      // 等太久(例如 Gmail 沒有回應)也不要一直等
+      const tooLong = Date.now() - watching.since > 10 * 60 * 1000;
+      if (!finished && !tooLong) return;
+      const w = watching;
+      watching = null;
+      if (p.error) return toast(`掃描失敗: ${p.error}`, false, 6000);
+      if (!finished) return;
+      const diff = data.items.length - w.items;
+      const parts = [`${w.full ? "重新掃描" : "檢查"}完成`];
+      if (diff > 0) parts.push(`新增 ${diff} 張發票`);
+      else if (diff < 0) parts.push(`移除 ${-diff} 張(信已刪除)`);
+      else parts.push("沒有新的發票");
+      const du = data.unknown.length - w.unknown;
+      if (du > 0) parts.push(`${du} 封找不到號碼`);
+      toast(parts.join(", "), true, 5000);
+    }
     $(".iv-add").onclick = () => manualDialog();
 
     // ---- 摘要與篩選 ----
@@ -261,7 +295,13 @@ const InvoiceApp = (() => {
         who.title = "打開這封信";
         who.onclick = () => openMail(u.account, u.msg);
         main.append(who, h("div", "iv-meta", `${new Date(u.received * 1000).toLocaleDateString("zh-TW")} · ${u.subject || "(沒有主旨)"}`));
+        if (u.locked_pdf) main.append(h("div", "iv-locked", "🔒 附件 PDF 有密碼, 輸入密碼後會自動再找一次"));
         const acts = h("div", "iv-acts");
+        if (u.locked_pdf && u.from_addr) {
+          const pw = h("button", "iv-link", "輸入 PDF 密碼");
+          pw.onclick = () => pdfPassword(u);
+          acts.append(pw);
+        }
         const open = h("button", "iv-link", "打開");
         open.onclick = () => openMail(u.account, u.msg);
         const add = h("button", "iv-link", "加入號碼");
@@ -282,6 +322,37 @@ const InvoiceApp = (() => {
         r.append(main, acts);
         listEl.append(r);
       }
+    }
+
+    // 記住這個寄件者的 PDF 密碼(存在這台, 權限 600), 發票會自動再找一次
+    function pdfPassword(u) {
+      overlay.hidden = false;
+      const box = h("form", "iv-dialog");
+      box.innerHTML = `
+        <h3>PDF 密碼</h3>
+        <div class="iv-from"></div>
+        <label>密碼<input name="pw" type="password" required autocomplete="off"></label>
+        <div class="iv-hint2">記住後, 這個寄件者以後的 PDF 都會用這個密碼打開(郵件的附件預覽也是)。常見的是身分證字號。</div>
+        <div class="iv-err" hidden></div>
+        <div class="iv-dbtns"><button type="button" class="iv-btn iv-cancel">取消</button><button type="submit" class="iv-btn primary">記住並重新找</button></div>`;
+      box.querySelector(".iv-from").textContent = `${u.from} <${u.from_addr}>`;
+      box.querySelector(".iv-cancel").onclick = () => (overlay.hidden = true);
+      box.onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await req("/api/mail/pdfpw", { addr: u.from_addr, password: String(new FormData(box).get("pw")) });
+          overlay.hidden = true;
+          toast("已記住, 重新找發票中…");
+          setTimeout(load, 4000);
+          setTimeout(load, 12000);
+        } catch (ex) {
+          const err = box.querySelector(".iv-err");
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
+      };
+      overlay.replaceChildren(box);
+      box.querySelector("input").focus();
     }
 
     async function deleteMails(mails, question) {
@@ -344,25 +415,26 @@ const InvoiceApp = (() => {
     async function load() {
       try {
         data = await req("/api/invoice");
-        if (!closed) render();
+        if (!closed) {
+          render();
+          checkDone();
+        }
       } catch (e) {
         listEl.replaceChildren(h("div", "iv-empty", `讀取失敗: ${e.message}`));
       }
     }
 
-    // 掃描中常常更新, 平常每分鐘
+    // 掃描中(或等手動開始的掃描)常常更新, 平常每分鐘
     let timer = null;
-    const tick = () => {
+    function tick(ms) {
       clearTimeout(timer);
-      timer = setTimeout(
-        async () => {
-          if (!document.hidden && overlay.hidden) await load();
-          if (!closed) tick();
-        },
-        data?.progress.running ? 2000 : 60000,
-      );
-    };
-    load().then(tick);
+      const wait = ms ?? (watching || data?.progress.running ? 1500 : 60000);
+      timer = setTimeout(async () => {
+        if (!document.hidden && overlay.hidden) await load();
+        if (!closed) tick();
+      }, wait);
+    }
+    load().then(() => tick());
 
     return () => {
       closed = true;

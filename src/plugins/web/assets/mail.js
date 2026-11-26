@@ -770,16 +770,19 @@ const MailApp = (() => {
         img.src = url;
         img.alt = x.name;
         body.append(img);
-      } else if (x.type === "application/pdf") {
+      } else if (x.type === "application/pdf" || /\.pdf$/i.test(x.name)) {
         const status = h("div", "ml-empty", "讀取中…");
         body.append(status);
-        renderPdf(body, url, () => stopped)
+        renderPdf(body, url, () => stopped, current?.info?.from?.addr || "")
           .then((d) => {
             doc = d;
             status.remove();
             if (stopped) d.destroy();
           })
-          .catch((e) => (status.textContent = `無法開啟 PDF: ${e?.message || e}`));
+          .catch((e) => {
+            status.hidden = false;
+            status.textContent = `無法開啟 PDF: ${e?.message || e}`;
+          });
       } else if (x.type.startsWith("text/")) {
         const f = document.createElement("iframe");
         f.className = "ml-viewer-frame";
@@ -797,8 +800,39 @@ const MailApp = (() => {
       }
     }
 
+    // 在附件預覽裡問 PDF 的密碼; 勾「記住」才會存在這台(發票掃描也會用到)
+    function askPassword(body, wrong, canRemember, savedWrong) {
+      return new Promise((resolve, reject) => {
+          body.querySelector(".ml-pw")?.remove();
+        const f = h("form", "ml-pw");
+        f.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <div class="ml-pw-title">這個 PDF 有密碼保護</div>
+          <div class="ml-pw-err" ${wrong ? "" : "hidden"}>${savedWrong ? "記住的密碼不對了, 請重新輸入" : "密碼不對, 再試一次"}</div>
+          <input type="password" autocomplete="off" placeholder="輸入密碼" enterkeyhint="go">
+          <label class="ml-pw-keep" ${canRemember ? "" : "hidden"}><input type="checkbox" ${savedWrong ? "checked" : ""}> 記住這個寄件者的密碼(發票掃描也會用到)</label>
+          <div class="ml-pw-btns"><button type="button" class="ml-pw-cancel">取消</button><button type="submit" class="ml-primary">開啟</button></div>`;
+        const input = f.querySelector('input[type="password"]');
+        f.onsubmit = (e) => {
+          e.preventDefault();
+          if (!input.value) return input.focus();
+          f.querySelector(".ml-primary").disabled = true;
+          f.querySelector(".ml-primary").textContent = "開啟中…";
+          resolve({ pw: input.value, keep: f.querySelector(".ml-pw-keep input").checked });
+        };
+        f.querySelector(".ml-pw-cancel").onclick = () => {
+          f.remove();
+          reject(new Error("取消"));
+        };
+        // 「讀取中…」先藏起來
+        body.querySelectorAll(".ml-empty").forEach((x) => (x.hidden = true));
+        body.prepend(f);
+        input.focus();
+      });
+    }
+
     let pdfjs = null;
-    async function renderPdf(body, url, stopped) {
+    async function renderPdf(body, url, stopped, addr) {
       if (!pdfjs) {
         pdfjs = import("/pdfjs/pdf.min.mjs").then((lib) => {
           lib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
@@ -807,14 +841,48 @@ const MailApp = (() => {
         pdfjs.catch(() => (pdfjs = null));
       }
       const lib = await pdfjs;
-      const doc = await lib.getDocument({
+      const task = lib.getDocument({
         url,
         cMapUrl: "/pdfjs/cmaps/",
         cMapPacked: true,
         standardFontDataUrl: "/pdfjs/standard_fonts/",
         wasmUrl: "/pdfjs/wasm/",
         isEvalSupported: false,
-      }).promise;
+      });
+      // 有密碼的 PDF(例如帳單常用身分證字號當密碼): 先用這個寄件者記住的密碼, 不行再問
+      let saved = null;
+      let triedSaved = false;
+      let remember = null; // 打開成功後要記住的密碼
+      task.onPassword = async (update, reason) => {
+        if (addr && saved === null) {
+          saved = (await req(api(`/pdfpw?addr=${enc(addr)}`)).catch(() => null))?.password || "";
+        }
+        if (saved && !triedSaved) {
+          triedSaved = true;
+          return update(saved);
+        }
+        const wrong = reason === lib.PasswordResponses.INCORRECT_PASSWORD;
+        askPassword(body, wrong, !!addr, triedSaved && wrong && remember === null).then(
+          ({ pw, keep }) => {
+            remember = keep ? pw : false;
+            update(pw);
+          },
+          () => task.destroy(),
+        );
+      };
+      let doc;
+      try {
+        doc = await task.promise;
+      } catch (e) {
+        if (e?.name === "PasswordException") throw new Error("需要密碼才能開啟");
+        throw e;
+      }
+      body.querySelector(".ml-pw")?.remove();
+      if (remember && addr) {
+        req(api("/pdfpw"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ addr, password: remember }) })
+          .then(() => toast("已記住這個寄件者的 PDF 密碼"))
+          .catch((e) => toast(`無法記住密碼: ${e.message}`, false));
+      }
       // 一頁一頁畫, 寬度配合畫面
       const width = Math.max(200, body.clientWidth - 16);
       const dpr = Math.min(2, window.devicePixelRatio || 1);
