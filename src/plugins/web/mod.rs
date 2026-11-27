@@ -14,6 +14,7 @@ pub use mail_api::org_domain;
 mod music_api;
 mod page;
 mod pdfjs;
+pub mod push;
 pub mod server;
 mod sysmon;
 mod term_api;

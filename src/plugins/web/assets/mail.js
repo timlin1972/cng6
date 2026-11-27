@@ -35,6 +35,8 @@ const MailApp = (() => {
     { key: "important", title: "重要郵件", q: "is:important" },
     { key: "sent", title: "寄件備份", q: "in:sent" },
     { key: "drafts", title: "草稿", q: "in:drafts" },
+    // 封存: 不在收件匣的信(寄出的、草稿除外; 所有郵件本來就不含垃圾郵件和垃圾桶)
+    { key: "archive", title: "封存", q: "-in:inbox -in:sent -in:drafts -in:chats" },
     { key: "all", title: "所有郵件", q: "" },
     { key: "junk", title: "垃圾郵件", special: "junk" },
     { key: "trash", title: "垃圾桶", special: "trash" },
@@ -1041,6 +1043,65 @@ const MailApp = (() => {
       } catch {}
     }
 
+    // ---- 推播通知(這台裝置): 網頁關著也收得到新郵件、發票中獎 ----
+    function pushSection() {
+      const P = window.CNG6Push;
+      const wrap = h("div", "ml-push");
+      wrap.append(h("h4", "", "推播通知(這台裝置)"));
+      const row = h("div", "ml-push-row");
+      const text = h("span", "ml-push-text", "檢查中…");
+      const toggle = h("button", "ml-link", "");
+      const test = h("button", "ml-link", "傳送測試");
+      toggle.hidden = test.hidden = true;
+      row.append(text, toggle, test);
+      wrap.append(row);
+      async function refresh() {
+        const why = await P.unsupported();
+        if (why) {
+          text.textContent = why;
+          toggle.hidden = test.hidden = true;
+          return;
+        }
+        let st = { subscribed: false, count: 0 };
+        try {
+          st = await P.status();
+        } catch {}
+        const others = st.count - (st.subscribed ? 1 : 0);
+        text.textContent = (st.subscribed ? "已開啟" : "未開啟") + (others > 0 ? `(另外還有 ${others} 台裝置)` : "");
+        toggle.textContent = st.subscribed ? "關閉" : "開啟";
+        toggle.hidden = false;
+        test.hidden = !st.subscribed;
+        toggle.onclick = async () => {
+          toggle.disabled = true;
+          try {
+            if (st.subscribed) {
+              await P.disable();
+              toast("已關閉推播");
+            } else {
+              await P.enable();
+              toast("已開啟推播");
+            }
+          } catch (e) {
+            toast(e.message, false);
+          }
+          toggle.disabled = false;
+          refresh();
+        };
+      }
+      test.onclick = async () => {
+        test.disabled = true;
+        try {
+          await P.test();
+          toast("已送出, 幾秒內會收到");
+        } catch (e) {
+          toast(e.message, false);
+        }
+        test.disabled = false;
+      };
+      refresh();
+      return wrap;
+    }
+
     // ---- 帳號管理 ----
     function openAccounts() {
       overlay.hidden = false;
@@ -1089,6 +1150,7 @@ const MailApp = (() => {
         }
         box.append(sw);
       }
+      box.append(pushSection());
       box.append(h("h4", "", "加入帳號"));
       const help = h("div", "ml-help");
       help.innerHTML = `用 Google 的<b>應用程式密碼</b>登入(不是 Gmail 密碼):

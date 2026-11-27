@@ -683,6 +683,20 @@
   font-size: 14px;
 }
 
+/* 推播通知 */
+.ml-push-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.ml-push-text {
+  flex: 1 1 12em;
+  color: var(--ml-text-2);
+}
+
 /* PDF 密碼 */
 .ml-pw {
   align-self: center;

@@ -68,3 +68,7 @@ web_key.pem
 
 # 個人筆記(使用者自己的檔案)
 /notebook/
+*.ts.net.crt
+*.ts.net.key
+/.tls-renew.*/
+web-push.json

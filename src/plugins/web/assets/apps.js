@@ -368,6 +368,120 @@ const Apps = (() => {
   setInterval(poll, 2000);
 })();
 
+// ---- 打開某封信(通知、推播都用這個) ----
+function openMail(account, id) {
+  window.MailOpenRequest = { account, id };
+  window.dispatchEvent(new CustomEvent("cng6-mail-open", { detail: window.MailOpenRequest }));
+  if (window.DeskNav) window.DeskNav.openApp("mail");
+  else if (window.MobileNav) window.MobileNav.openApp("mail");
+}
+
+// ---- PWA: service worker 與推播通知 ----
+// 只在瀏覽器信任的 HTTPS 下可用(例如 Tailscale 的憑證); 自簽憑證時註冊會失敗, 推播就顯示不能用
+window.CNG6Push = (() => {
+  const swOk = "serviceWorker" in navigator && window.isSecureContext;
+  const reg = swOk ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
+
+  // 點推播通知時, service worker 叫我們打開那封信
+  if (swOk) {
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data && e.data.type === "cng6-open-mail") openMail(e.data.account, e.data.id);
+    });
+  }
+  // 網頁原本沒開: 從網址帶進來
+  const q = new URLSearchParams(location.search);
+  if (q.get("mail") && q.get("id")) {
+    const [a, id] = [q.get("mail"), q.get("id")];
+    history.replaceState(null, "", location.pathname);
+    window.addEventListener("load", () => setTimeout(() => openMail(a, id), 300));
+  }
+
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+  function keyBytes(b64) {
+    const s = atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64.length + 3) % 4));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  }
+  function sameKey(buf, b64) {
+    if (!buf) return false;
+    const a = new Uint8Array(buf);
+    const b = keyBytes(b64);
+    return a.length === b.length && a.every((x, i) => x === b[i]);
+  }
+  function label() {
+    const ua = navigator.userAgent;
+    const os = ios ? (/iPad/.test(ua) || navigator.maxTouchPoints > 1 && /Mac/.test(ua) ? "iPad" : "iPhone")
+      : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "裝置";
+    const br = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+    return standalone ? `${os} App` : `${os} ${br}`.trim();
+  }
+  async function post(url, body) {
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    return d;
+  }
+  async function current() {
+    const r = await reg;
+    return r && r.pushManager ? r.pushManager.getSubscription() : null;
+  }
+
+  return {
+    // 不能用的原因; 可以用時是空字串
+    async unsupported() {
+      if (!window.isSecureContext || !swOk) return "需要受信任的 HTTPS 連線(例如 Tailscale 的網址), 自簽憑證不能用推播";
+      if (ios && !standalone) return "iPhone / iPad 要先「加入主畫面」, 從主畫面的圖示打開才能開啟推播";
+      if (!("PushManager" in window) || !("Notification" in window)) return "這個瀏覽器不支援推播通知";
+      if (!(await reg)) return "service worker 註冊失敗(憑證可能不受信任)";
+      return "";
+    },
+    // 這台裝置現在有沒有在收推播
+    async active() {
+      try {
+        if (!swOk || !("Notification" in window) || Notification.permission !== "granted") return false;
+        return !!(await current());
+      } catch {
+        return false;
+      }
+    },
+    async enable() {
+      const why = await this.unsupported();
+      if (why) throw new Error(why);
+      if ((await Notification.requestPermission()) !== "granted") throw new Error("沒有允許通知(可以到瀏覽器或系統設定打開)");
+      const r = await reg;
+      const info = await (await fetch("/api/push", { cache: "no-store" })).json();
+      let sub = await r.pushManager.getSubscription();
+      // 伺服器的金鑰換過: 舊的訂閱不能用
+      if (sub && !sameKey(sub.options.applicationServerKey, info.key)) {
+        await sub.unsubscribe();
+        sub = null;
+      }
+      if (!sub) sub = await r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(info.key) });
+      const j = sub.toJSON();
+      return post("/api/push/subscribe", { endpoint: j.endpoint, keys: j.keys, label: label() });
+    },
+    async disable() {
+      const sub = await current();
+      if (!sub) return;
+      await post("/api/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+      await sub.unsubscribe();
+    },
+    async test() {
+      const sub = await current();
+      if (!sub) throw new Error("這台裝置還沒開啟推播");
+      return post("/api/push/test", { endpoint: sub.endpoint });
+    },
+    // 伺服器端還認不認得這個訂閱 (count: 總共幾台裝置)
+    async status() {
+      const sub = await current();
+      const r = await fetch(`/api/push?endpoint=${encodeURIComponent(sub ? sub.endpoint : "")}`, { cache: "no-store" });
+      const d = await r.json();
+      return { local: !!sub, subscribed: !!sub && d.subscribed && Notification.permission === "granted", count: d.count };
+    },
+  };
+})();
+
 // ---- 新郵件通知: 右上角跳出, 點一下打開那封信 ----
 (() => {
   let last = null;
@@ -401,10 +515,7 @@ const Apps = (() => {
       setTimeout(() => el.remove(), 300);
     };
     el.onclick = () => {
-      window.MailOpenRequest = { account: n.account, id: n.msg };
-      window.dispatchEvent(new CustomEvent("cng6-mail-open", { detail: window.MailOpenRequest }));
-      if (window.DeskNav) window.DeskNav.openApp("mail");
-      else if (window.MobileNav) window.MobileNav.openApp("mail");
+      openMail(n.account, n.msg);
       close();
     };
     container().prepend(el);
@@ -419,8 +530,8 @@ const Apps = (() => {
       const r = await fetch(`/api/mail/notices?after=${last ?? 0}`, { cache: "no-store" });
       if (!r.ok) return;
       const d = await r.json();
-      // 第一次: 只記住位置, 不顯示舊的通知
-      if (last !== null) d.notices.forEach(show);
+      // 第一次: 只記住位置, 不顯示舊的通知; 這台裝置有開推播時由系統通知顯示, 不重複跳
+      if (last !== null && !(await window.CNG6Push.active())) d.notices.forEach(show);
       last = d.last;
     } catch {}
   }

@@ -218,6 +218,21 @@ impl App {
         // 自動更新: 背景檢查 Git, 有新版時編譯並重新啟動(cluster 傳輸中會延後)
         let update = update::Shared::new();
         app.register(Box::new(Update::new(update.clone(), cluster.clone())));
+        // 推播通知: 新郵件、發票中獎送到訂閱的手機/電腦(網頁關著也收得到)
+        let push = crate::plugins::web::push::Shared::new();
+        {
+            let push = push.clone();
+            mail.on_notice(Box::new(move |n| {
+                // 發票的通知: account 是「發票」或信箱名稱, from 是「中獎」之類的說明
+                let invoice = n.from.contains('獎');
+                push.notify(crate::plugins::web::push::Message {
+                    title: if invoice { format!("發票 · {}", n.from) } else { n.from.clone() },
+                    body: if invoice { n.subject.clone() } else { format!("{}\n{}", n.subject, n.account) },
+                    tag: format!("mail-{}", n.id),
+                    mail: (!n.msg.is_empty()).then(|| (n.account.clone(), n.msg.clone())),
+                });
+            }));
+        }
         app.register(Box::new(Web::new(
             remote_tx,
             crate::plugins::web::server::Services {
@@ -233,6 +248,7 @@ impl App {
                 terminal,
                 todo,
                 invoice,
+                push,
             },
         )));
         app

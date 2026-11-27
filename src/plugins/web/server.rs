@@ -5,10 +5,10 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -24,6 +24,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::crypto::CryptoProvider;
+use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+use tokio_rustls::rustls::sign::CertifiedKey;
 use tokio_rustls::rustls::crypto::ring;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -123,6 +126,7 @@ pub struct Services {
     pub terminal: terminal::Shared,
     pub todo: todo::Shared,
     pub invoice: invoice::Shared,
+    pub push: super::push::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -135,6 +139,7 @@ pub fn start(
     services: Services,
 ) -> Result<(Handle, Vec<String>), String> {
     let mut notes = Vec::new();
+    services.push.set_log(log.clone());
     let tls = if cfg.https {
         if !cfg.cert.exists() && !cfg.key.exists() {
             generate_cert(&cfg.cert, &cfg.key)?;
@@ -144,7 +149,7 @@ pub fn start(
                 cfg.key.display()
             ));
         }
-        Some(TlsAcceptor::from(load_tls(&cfg.cert, &cfg.key)?))
+        Some(TlsAcceptor::from(load_tls(&cfg.cert, &cfg.key, log.clone())?))
     } else {
         None
     };
@@ -294,6 +299,12 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .route("/api/invoice/claimed", post(invoice_api::claimed))
         .route("/api/invoice/dismiss", post(invoice_api::dismiss))
         .with_state(state.services.invoice.clone());
+    let push = Router::new()
+        .route("/api/push", get(super::push::info))
+        .route("/api/push/subscribe", post(super::push::subscribe))
+        .route("/api/push/unsubscribe", post(super::push::unsubscribe))
+        .route("/api/push/test", post(super::push::test))
+        .with_state(state.services.push.clone());
     let update = Router::new()
         .route("/api/update", get(update_info))
         .with_state(state.services.update.clone());
@@ -331,6 +342,7 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .merge(term)
         .merge(todo)
         .merge(invoice)
+        .merge(push)
         .merge(books)
         .merge(files)
 }
@@ -358,6 +370,7 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .route("/favicon.ico", get(favicon))
         .route("/apple-touch-icon.png", get(touch_icon))
         .route("/manifest.webmanifest", get(manifest))
+        .route("/sw.js", get(super::push::service_worker))
         .route("/icons/{file}", get(app_icon))
         .fallback(not_found)
         .with_state(state.clone())
@@ -557,20 +570,99 @@ async fn redirect(
     Redirect::temporary(&target).into_response()
 }
 
-fn load_tls(cert: &Path, key: &Path) -> Result<Arc<ServerConfig>, String> {
+fn load_tls(cert: &Path, key: &Path, log: Sender<String>) -> Result<Arc<ServerConfig>, String> {
+    let provider = Arc::new(ring::default_provider());
+    let resolver = ReloadingCert::new(cert, key, provider.clone(), log)?;
+    let mut config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("TLS 設定錯誤: {e}"))?
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(resolver));
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(Arc::new(config))
+}
+
+fn load_certified_key(
+    cert: &Path,
+    key: &Path,
+    provider: &CryptoProvider,
+) -> Result<Arc<CertifiedKey>, String> {
     let certs = CertificateDer::pem_file_iter(cert)
         .and_then(|it| it.collect::<Result<Vec<_>, _>>())
         .map_err(|e| format!("無法讀取憑證 {}: {e}", cert.display()))?;
     let key = PrivateKeyDer::from_pem_file(key)
         .map_err(|e| format!("無法讀取私鑰 {}: {e}", key.display()))?;
-    let mut config = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .map_err(|e| format!("TLS 設定錯誤: {e}"))?
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| format!("憑證與私鑰不符或格式錯誤: {e}"))?;
-    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    Ok(Arc::new(config))
+    CertifiedKey::from_der(certs, key, provider)
+        .map(Arc::new)
+        .map_err(|e| format!("憑證與私鑰不符或格式錯誤: {e}"))
+}
+
+/// 憑證檔案換了就自動改用新的, 不用重新啟動 web (例如 utils/tls-renew.sh 每月續約 Tailscale 憑證)。
+/// 每分鐘最多檢查一次檔案時間; 新檔案讀不進來(例如憑證和私鑰只換了一半)就先用舊的, 下次再試。
+#[derive(Debug)]
+struct ReloadingCert {
+    cert: PathBuf,
+    key: PathBuf,
+    provider: Arc<CryptoProvider>,
+    log: Sender<String>,
+    state: Mutex<CertState>,
+}
+
+#[derive(Debug)]
+struct CertState {
+    checked: Instant,
+    stamp: Option<(SystemTime, SystemTime)>,
+    current: Arc<CertifiedKey>,
+}
+
+impl ReloadingCert {
+    const CHECK_EVERY: Duration = Duration::from_secs(60);
+
+    fn new(
+        cert: &Path,
+        key: &Path,
+        provider: Arc<CryptoProvider>,
+        log: Sender<String>,
+    ) -> Result<Self, String> {
+        let stamp = Self::stamp(cert, key);
+        let current = load_certified_key(cert, key, &provider)?;
+        Ok(Self {
+            cert: cert.to_path_buf(),
+            key: key.to_path_buf(),
+            provider,
+            log,
+            state: Mutex::new(CertState { checked: Instant::now(), stamp, current }),
+        })
+    }
+
+    fn stamp(cert: &Path, key: &Path) -> Option<(SystemTime, SystemTime)> {
+        let m = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        Some((m(cert)?, m(key)?))
+    }
+}
+
+impl ResolvesServerCert for ReloadingCert {
+    fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if st.checked.elapsed() >= Self::CHECK_EVERY {
+            st.checked = Instant::now();
+            let stamp = Self::stamp(&self.cert, &self.key);
+            if stamp.is_some() && stamp != st.stamp {
+                // 失敗也記下時間: 同一組壞檔只回報一次, 檔案再變動時才重試
+                st.stamp = stamp;
+                match load_certified_key(&self.cert, &self.key, &self.provider) {
+                    Ok(k) => {
+                        st.current = k;
+                        let _ = self.log.send(format!("web: 憑證已更新, 改用新的 {}", self.cert.display()));
+                    }
+                    Err(e) => {
+                        let _ = self.log.send(format!("web: 新憑證無法使用, 繼續用舊的: {e}"));
+                    }
+                }
+            }
+        }
+        Some(st.current.clone())
+    }
 }
 
 /// 產生自簽憑證, 涵蓋 localhost、主機名稱與本機所有 IP

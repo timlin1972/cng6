@@ -87,6 +87,9 @@ pub struct AccountView {
     pub status: AccountStatus,
 }
 
+/// 有新通知時呼叫
+pub type NoticeHook = Box<dyn Fn(&Notice) + Send + Sync>;
+
 struct Inner {
     file: PathBuf,
     trusted_file: PathBuf,
@@ -97,6 +100,8 @@ struct Inner {
     pdf_pw: RwLock<BTreeMap<String, String>>,
     /// 記住新的 PDF 密碼時通知(發票會重新看找不到號碼的信)
     pdf_hook: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// 有新通知時(例如送到手機推播)
+    notice_hook: OnceLock<NoticeHook>,
     accounts: RwLock<Vec<Account>>,
     status: RwLock<BTreeMap<String, AccountStatus>>,
     notices: Mutex<VecDeque<Notice>>,
@@ -139,6 +144,7 @@ impl Shared {
             pdf_pw_file,
             pdf_pw: RwLock::new(pdf_pw),
             pdf_hook: OnceLock::new(),
+            notice_hook: OnceLock::new(),
             accounts: RwLock::new(accounts),
             status: RwLock::new(BTreeMap::new()),
             notices: Mutex::new(VecDeque::new()),
@@ -211,6 +217,11 @@ impl Shared {
         Ok(())
     }
 
+    /// 有新通知時要做的事(只能設定一次)
+    pub fn on_notice(&self, f: NoticeHook) {
+        let _ = self.0.notice_hook.set(f);
+    }
+
     /// 記住新的 PDF 密碼時要做的事(只能設定一次)
     pub fn on_pdf_password(&self, f: Box<dyn Fn() + Send + Sync>) {
         let _ = self.0.pdf_hook.set(f);
@@ -272,6 +283,9 @@ impl Shared {
         let from = if n.from.is_empty() { "(沒有寄件者)" } else { &n.from };
         let subject = if n.subject.is_empty() { "(沒有主旨)" } else { &n.subject };
         self.log(false, format!("[{}] 新郵件: {from} — {subject}", n.account));
+        if let Some(f) = self.0.notice_hook.get() {
+            f(&n);
+        }
         let mut q = self.0.notices.lock().unwrap();
         q.push_back(n);
         while q.len() > NOTICES {
