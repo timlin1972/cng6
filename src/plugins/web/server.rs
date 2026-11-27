@@ -357,6 +357,8 @@ async fn accept_loop(listener: TcpListener, tls: Option<TlsAcceptor>, state: App
         .route("/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
         .route("/apple-touch-icon.png", get(touch_icon))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/icons/{file}", get(app_icon))
         .fallback(not_found)
         .with_state(state.clone())
         .merge(api)
@@ -472,6 +474,60 @@ async fn touch_icon() -> Response {
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         &include_bytes!("assets/apple-touch-icon.png")[..],
+    )
+        .into_response()
+}
+
+/// PWA 的 Web App Manifest: 讓瀏覽器可以把網站「安裝」成獨立視窗的 App。
+/// 名稱用設備名稱, 這樣不同機器裝起來的圖示分得出來
+async fn manifest(State(st): State<AppState>) -> Response {
+    let name = st.services.cluster.name();
+    let icon = |src: &str, size: &str, purpose: &str| {
+        serde_json::json!({ "src": src, "sizes": size, "type": "image/png", "purpose": purpose })
+    };
+    let m = serde_json::json!({
+        "id": "/",
+        "name": format!("{name} · CNG6"),
+        "short_name": name,
+        "description": "CNG6 (Controller Next Generation Six)",
+        "lang": "zh-Hant",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#000000",
+        "theme_color": "#3b5bdb",
+        "icons": [
+            icon("/icons/icon-192.png", "192x192", "any"),
+            icon("/icons/icon-512.png", "512x512", "any"),
+            icon("/icons/icon-maskable-192.png", "192x192", "maskable"),
+            icon("/icons/icon-maskable-512.png", "512x512", "maskable"),
+        ],
+    });
+    (
+        [
+            (header::CONTENT_TYPE, "application/manifest+json"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        m.to_string(),
+    )
+        .into_response()
+}
+
+/// PWA 安裝用的圖示 (maskable: 滿版、圖案在安全範圍內, 給 Android 裁成各種形狀)
+async fn app_icon(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+    let data: &'static [u8] = match file.as_str() {
+        "icon-192.png" => include_bytes!("assets/icon-192.png"),
+        "icon-512.png" => include_bytes!("assets/icon-512.png"),
+        "icon-maskable-192.png" => include_bytes!("assets/icon-maskable-192.png"),
+        "icon-maskable-512.png" => include_bytes!("assets/icon-maskable-512.png"),
+        _ => return not_found().await,
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        data,
     )
         .into_response()
 }
