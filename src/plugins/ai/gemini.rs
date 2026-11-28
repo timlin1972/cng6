@@ -75,7 +75,7 @@ pub fn models(key: &str) -> Result<Vec<String>, String> {
         return Err(api_error(status, &body));
     }
     let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    let mut out: Vec<String> = v["models"]
+    let out: Vec<String> = v["models"]
         .as_array()
         .into_iter()
         .flatten()
@@ -86,11 +86,37 @@ pub fn models(key: &str) -> Result<Vec<String>, String> {
         })
         .filter_map(|m| m["name"].as_str())
         .map(|n| n.trim_start_matches("models/").to_string())
-        .filter(|n| n.starts_with("gemini") && !n.contains("embedding") && !n.contains("tts") && !n.contains("image"))
         .collect();
-    out.sort();
-    out.dedup();
-    Ok(out)
+    Ok(chat_models(&out))
+}
+
+/// 從所有模型裡挑出一般聊天用的(清單有六十幾個, 大多是語音、畫圖、實驗用或舊的):
+/// - `gemini-flash-latest` 這類自動指向最新版的名稱, 排最前面
+/// - `gemini-X.Y-flash` / `-flash-lite` / `-pro`(可帶 `-preview`), 版本 3 以上(2.x 已不開放給新使用者),
+///   新的在前; 有正式版時不列同名的 preview
+fn chat_models(names: &[String]) -> Vec<String> {
+    const KINDS: [&str; 3] = ["flash", "flash-lite", "pro"];
+    let latest: Vec<String> = KINDS
+        .iter()
+        .map(|k| format!("gemini-{k}-latest"))
+        .filter(|n| names.contains(n))
+        .collect();
+    let version = |n: &str| -> Option<f64> {
+        let rest = n.strip_prefix("gemini-")?;
+        let (ver, kind) = rest.split_once('-')?;
+        let kind = kind.strip_suffix("-preview").unwrap_or(kind);
+        let v: f64 = ver.parse().ok()?;
+        (v >= 3.0 && KINDS.contains(&kind)).then_some(v)
+    };
+    let mut versioned: Vec<(f64, String)> = names
+        .iter()
+        .filter_map(|n| Some((version(n)?, n.clone())))
+        .filter(|(_, n)| !n.strip_suffix("-preview").is_some_and(|stable| names.iter().any(|x| x == stable)))
+        .collect();
+    // 新的版本在前; 同版本依名稱(flash、flash-lite、pro)
+    versioned.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    versioned.dedup_by(|a, b| a.1 == b.1);
+    latest.into_iter().chain(versioned.into_iter().map(|(_, n)| n)).collect()
 }
 
 /// 一次串流的結果
@@ -199,6 +225,27 @@ mod tests {
         assert_eq!(parts[0]["text"], "你好,世界");
         assert_eq!(parts[1]["thoughtSignature"], "s");
         assert_eq!(parts[2]["thoughtSignature"], "t");
+    }
+
+    #[test]
+    fn picks_chat_models() {
+        let names: Vec<String> = [
+            "gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest",
+            "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
+            "gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite", "gemini-nano-banana-2.1", "gemini-3.5-flash",
+            "gemini-3.5-flash-lite", "gemini-omni-1.2-flash", "gemini-3.5-transcribe", "gemini-3.8-flash", "gemini-4-neon",
+            "gemini-3.8-flash-tts", "gemini-robotics-er-2-preview", "text-embedding-004",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            chat_models(&names),
+            [
+                "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-pro-latest", "gemini-3.8-flash",
+                "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview",
+                "gemini-3-flash-preview",
+            ]
+        );
     }
 
     #[test]
