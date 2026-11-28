@@ -23,6 +23,7 @@ pub fn router(ai: Shared) -> Router {
         .route("/api/ai", get(info))
         .route("/api/ai/key", post(set_key))
         .route("/api/ai/models", get(models))
+        .route("/api/ai/model", post(set_model))
         .route("/api/ai/ask", post(ask))
         .route("/api/ai/chats", post(create))
         .route("/api/ai/chats/{id}", get(view).delete(delete).patch(rename))
@@ -117,6 +118,15 @@ async fn models(State(ai): State<Shared>) -> Response {
         Ok(Err(e)) => err(StatusCode::BAD_GATEWAY, e),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+#[derive(Deserialize)]
+struct ModelReq {
+    model: String,
+}
+
+async fn set_model(State(ai): State<Shared>, Json(r): Json<ModelReq>) -> Response {
+    done(ai.set_model(&r.model))
 }
 
 #[derive(Deserialize)]

@@ -98,6 +98,7 @@ pub struct ChatView {
 struct Inner {
     chats_file: PathBuf,
     key_file: PathBuf,
+    /// 兩個都要鎖時, 一定先鎖 chats 再鎖 runs(順序相反會死結)
     chats: Mutex<Vec<Chat>>,
     runs: Mutex<HashMap<String, Run>>,
     key: RwLock<String>,
@@ -276,6 +277,13 @@ impl Shared {
         Ok(())
     }
 
+    /// 換模型(寫進設定, cluster 同步)
+    pub fn set_model(&self, model: &str) -> Result<(), String> {
+        let m = model_name(model)?;
+        self.0.cmds.lock().unwrap().push(format!("/settings set ai.model {m}"));
+        Ok(())
+    }
+
     pub fn models(&self) -> Result<Vec<String>, String> {
         let key = self.0.key.read().unwrap().clone();
         if key.is_empty() {
@@ -285,12 +293,10 @@ impl Shared {
     }
 
     pub fn list(&self) -> Vec<ChatMeta> {
+        // 鎖的順序一律是 chats → runs(view、create 也是), 反過來會互相等住(死結)
+        let chats = self.0.chats.lock().unwrap();
         let runs = self.0.runs.lock().unwrap();
-        let mut v: Vec<ChatMeta> = self
-            .0
-            .chats
-            .lock()
-            .unwrap()
+        let mut v: Vec<ChatMeta> = chats
             .iter()
             .map(|c| ChatMeta {
                 id: c.id.clone(),
@@ -677,6 +683,15 @@ impl Shared {
     }
 }
 
+/// 檢查模型名稱(可以帶 models/ 前綴)
+fn model_name(value: &str) -> Result<String, String> {
+    let v = value.trim().trim_start_matches("models/");
+    if v.is_empty() || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) {
+        return Err("模型名稱格式不對, 例如 gemini-flash-latest".into());
+    }
+    Ok(v.to_string())
+}
+
 /// 從別台送到 AI 那台的請求加上這個標頭, 避免設定錯誤時互相轉來轉去
 pub const HOP_HEADER: &str = "x-cng6-ai-hop";
 
@@ -767,11 +782,8 @@ impl Plugin for Ai {
     fn apply_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "model" => {
-                let v = value.trim().trim_start_matches("models/");
-                if v.is_empty() || !v.chars().all(|c| c.is_ascii_alphanumeric() || "-._".contains(c)) {
-                    return Err("模型名稱格式不對, 例如 gemini-flash-latest".into());
-                }
-                *self.shared.0.model.write().unwrap() = v.to_string();
+                *self.shared.0.model.write().unwrap() = model_name(value)?;
+                self.shared.bump();
                 Ok(())
             }
             "node" => {

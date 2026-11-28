@@ -594,6 +594,35 @@
   font-size: 13px;
 }
 
+.ai-model-wrap {
+  margin-top: 10px;
+}
+
+.ai-model {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ai-text-2);
+  font-size: 12px;
+}
+
+.ai-model select {
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--ai-line);
+  border-radius: 8px;
+  background: var(--ai-side);
+  color: var(--ai-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.ai-model-note {
+  margin-top: 4px;
+  color: var(--ai-text-2);
+  font-size: 12px;
+}
+
 .ai-form {
   display: flex;
   flex-direction: column;

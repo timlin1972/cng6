@@ -16,6 +16,12 @@ fn base() -> String {
     std::env::var("CNG6_TEST_GEMINI_BASE").unwrap_or_else(|_| BASE.to_string())
 }
 
+/// 送出後等多久還沒開始回應就放棄(模型太忙時 Google 有時完全不回, 不會回錯誤)
+const RESPONSE_WAIT: Duration = Duration::from_secs(60);
+/// 串流中途停住多久就放棄
+const STALL_WAIT: Duration = Duration::from_secs(120);
+const BUSY: &str = "Gemini 目前沒有回應(這個模型可能太忙), 請稍後再試, 或在設定換一個模型";
+
 /// 共用的連線(建立 TLS 設定要一點時間, 重複使用比較快)
 fn agent() -> &'static ureq::Agent {
     static A: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
@@ -23,6 +29,8 @@ fn agent() -> &'static ureq::Agent {
         ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(300)))
             .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(RESPONSE_WAIT))
+            .timeout_per_read(Some(STALL_WAIT))
             .http_status_as_error(false)
             .build()
             .new_agent()
@@ -41,7 +49,16 @@ fn api_error(status: u16, body: &str) -> String {
         401 | 403 => format!("API key 沒有權限: {msg}"),
         404 => format!("找不到這個模型: {msg}"),
         429 => format!("用量超過限制(請稍後再試): {msg}"),
+        503 => format!("Gemini 這個模型目前太忙, 請稍後再試, 或在設定換一個模型({msg})"),
         _ => format!("Gemini 錯誤 {status}: {msg}"),
+    }
+}
+
+/// 連線錯誤的訊息(逾時說明可能是模型太忙)
+fn conn_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Timeout(_) => BUSY.to_string(),
+        e => format!("無法連到 Gemini: {e}"),
     }
 }
 
@@ -51,7 +68,7 @@ pub fn models(key: &str) -> Result<Vec<String>, String> {
         .get(format!("{}/models?pageSize=200", base()))
         .header("x-goog-api-key", key)
         .call()
-        .map_err(|e| format!("無法連到 Gemini: {e}"))?;
+        .map_err(conn_error)?;
     let status = res.status().as_u16();
     let body = res.body_mut().read_to_string().unwrap_or_default();
     if status != 200 {
@@ -104,7 +121,7 @@ pub fn stream(
         .header("x-goog-api-key", key)
         .header("Content-Type", "application/json")
         .send(body.to_string())
-        .map_err(|e| format!("無法連到 Gemini: {e}"))?;
+        .map_err(conn_error)?;
     let status = res.status().as_u16();
     if status != 200 {
         let body = res.body_mut().read_to_string().unwrap_or_default();
@@ -118,7 +135,12 @@ pub fn stream(
             finish = "STOPPED".into();
             break;
         }
-        let line = line.map_err(|e| format!("連線中斷: {e}"))?;
+        let line = line.map_err(|e| {
+            // ureq 的逾時包在 io::Error 裡
+            let timeout = e.kind() == std::io::ErrorKind::TimedOut
+                || e.get_ref().and_then(|x| x.downcast_ref::<ureq::Error>()).is_some_and(|x| matches!(x, ureq::Error::Timeout(_)));
+            if timeout { BUSY.to_string() } else { format!("連線中斷: {e}") }
+        })?;
         let Some(data) = line.strip_prefix("data:") else { continue };
         let Ok(chunk) = serde_json::from_str::<Value>(data.trim()) else { continue };
         if let Some(e) = chunk.get("error") {
@@ -186,5 +208,6 @@ mod tests {
         let e = api_error(401, r#"{"error":{"message":"API key not valid. Please pass a valid API key."}}"#);
         assert!(e.starts_with("API key 無效"), "{e}");
         assert!(api_error(429, "{}").starts_with("用量超過"));
+        assert!(api_error(503, r#"{"error":{"message":"high demand"}}"#).contains("太忙"));
     }
 }

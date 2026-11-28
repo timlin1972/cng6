@@ -583,6 +583,51 @@ const AiApp = (() => {
     });
 
     // ---- 設定 ----
+    // 模型選單: 列出這個 key 能用的模型, 選了馬上生效(cluster 同步)
+    function modelPicker() {
+      const row = h("label", "ai-model");
+      row.append("模型");
+      const sel = h("select");
+      const add = (name) => {
+        const o = h("option", "", name);
+        o.value = name;
+        sel.append(o);
+      };
+      add(info.model);
+      sel.disabled = true;
+      const note = h("div", "ai-model-note", "載入可用的模型…");
+      row.append(sel);
+      const wrap = h("div", "ai-model-wrap");
+      wrap.append(row, note);
+      req("/api/ai/models")
+        .then((d) => {
+          sel.replaceChildren();
+          const list = d.models || [];
+          if (!list.includes(info.model)) add(info.model);
+          list.forEach(add);
+          sel.value = info.model;
+          sel.disabled = false;
+          note.textContent = "回答很慢或顯示「太忙」時, 換一個試試; 名稱有 lite 的比較快";
+        })
+        .catch((e) => {
+          note.textContent = `無法取得模型清單: ${e.message}`;
+        });
+      sel.onchange = async () => {
+        const m = sel.value;
+        sel.disabled = true;
+        try {
+          await req("/api/ai/model", { json: { model: m } });
+          info.model = m;
+          toast(`已改用 ${m}`);
+        } catch (e) {
+          toast(e.message, false);
+          sel.value = info.model;
+        }
+        sel.disabled = false;
+      };
+      return wrap;
+    }
+
     function openSettings(first = false) {
       overlay.hidden = false;
       overlay.replaceChildren();
@@ -593,7 +638,8 @@ const AiApp = (() => {
         <br>key 只存在<b>這台機器</b>(權限 600); cluster 的其他機器會自動改用這台的 AI。`;
       box.append(help);
       if (info && info.configured) {
-        box.append(h("div", "ai-cur", `目前: ${info.node} · 模型 ${info.model}`));
+        box.append(h("div", "ai-cur", `目前: ${info.node}`));
+        box.append(modelPicker());
       }
       const form = h("form", "ai-form");
       form.innerHTML = `
