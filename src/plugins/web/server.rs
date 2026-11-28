@@ -127,6 +127,7 @@ pub struct Services {
     pub todo: todo::Shared,
     pub invoice: invoice::Shared,
     pub push: super::push::Shared,
+    pub ai: crate::plugins::ai::Shared,
 }
 
 /// 啟動伺服器。成功時回傳 handle 與要顯示的提示訊息。
@@ -343,6 +344,7 @@ pub fn local_api(log: Sender<String>, remote: remote::Sender, services: Services
         .merge(todo)
         .merge(invoice)
         .merge(push)
+        .merge(super::ai_api::router(state.services.ai.clone()))
         .merge(books)
         .merge(files)
 }

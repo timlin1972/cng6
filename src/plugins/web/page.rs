@@ -95,6 +95,8 @@ const TODO_JS: &str = include_str!("assets/todo.js");
 /// 電子發票(PC 與手機共用)
 const INV_CSS: &str = include_str!("assets/invoice.css");
 const INV_JS: &str = include_str!("assets/invoice.js");
+const AI_CSS: &str = include_str!("assets/ai.css");
+const AI_JS: &str = include_str!("assets/ai.js");
 /// Cluster(PC 與手機共用)
 const CLUSTER_CSS: &str = include_str!("assets/cluster.css");
 const CLUSTER_JS: &str = include_str!("assets/cluster.js");
@@ -137,6 +139,8 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*TODOJS*/", TODO_JS, 1)
             .replacen("/*INVCSS*/", INV_CSS, 1)
             .replacen("/*INVJS*/", INV_JS, 1)
+            .replacen("/*AICSS*/", AI_CSS, 1)
+            .replacen("/*AIJS*/", AI_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*JS*/", DESKTOP_JS, 1),
@@ -166,6 +170,8 @@ pub fn render_page(device: Device, name: &str) -> String {
             .replacen("/*TODOJS*/", TODO_JS, 1)
             .replacen("/*INVCSS*/", INV_CSS, 1)
             .replacen("/*INVJS*/", INV_JS, 1)
+            .replacen("/*AICSS*/", AI_CSS, 1)
+            .replacen("/*AIJS*/", AI_JS, 1)
             .replacen("/*CLUSTERCSS*/", CLUSTER_CSS, 1)
             .replacen("/*CLUSTERJS*/", CLUSTER_JS, 1)
             .replacen("/*MOBILEJS*/", MOBILE_JS, 1),

@@ -212,6 +212,15 @@ impl App {
         // 電子發票: 從 Gmail 收集, 開獎後自動對獎, 中獎的加到待辦
         let invoice = invoice::Shared::new(mail.clone(), todo.clone());
         app.register(Box::new(Invoice::new(invoice.clone())));
+        // AI 助理(Gemini): API key 只放一台, 其他機器經由 cluster 使用
+        let ai = crate::plugins::ai::Shared::new(crate::plugins::ai::tools::Deps {
+            mail: mail.clone(),
+            todo: todo.clone(),
+            invoice: invoice.clone(),
+            weather: weather.clone(),
+            cluster: cluster.clone(),
+        });
+        app.register(Box::new(crate::plugins::ai::Ai::new(ai.clone())));
         // 終端機: 網頁上的 shell(cluster 也能開別台的)
         let terminal = terminal::Shared::new();
         app.register(Box::new(Terminal::new(terminal.clone())));
@@ -249,6 +258,7 @@ impl App {
                 todo,
                 invoice,
                 push,
+                ai,
             },
         )));
         app

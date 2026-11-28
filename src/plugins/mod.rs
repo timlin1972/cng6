@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod books;
 pub mod cluster;
 pub mod files;

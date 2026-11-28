@@ -24,6 +24,7 @@ const MailApp = (() => {
     trash: svg(`<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>`),
     unread: svg(`<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>`),
     star: svg(`<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/>`),
+    ai: svg(`<path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>`),
     ext: svg(`<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>`),
     clip: svg(`<path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/>`),
     user: svg(`<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>`),
@@ -401,7 +402,9 @@ const MailApp = (() => {
         if (r.dataset.swiped) return delete r.dataset.swiped;
         openMessage(m);
       };
-      r.onkeydown = (e) => e.key === "Enter" && openMessage(m);
+      r.onkeydown = (e) => {
+        if (e.key === "Enter") openMessage(m);
+      };
       enableSwipe(r, inner, m);
       return r;
     }
@@ -600,6 +603,56 @@ const MailApp = (() => {
       return b;
     }
 
+    // ---- AI: 摘要、翻譯、擬回覆(結果顯示在信的上方) ----
+    const AI_TASKS = [
+      ["summary", "摘要", "請用繁體中文摘要這封信: 先一句話說明重點, 再條列細節; 如果有需要我處理的事(期限、金額、要回覆或要做的動作)特別標出來。"],
+      ["translate", "翻譯", "把這封信翻譯成繁體中文(台灣用語), 保留原本的段落與條列; 如果原文已經是中文, 就翻譯成英文。只輸出翻譯。"],
+      ["reply", "擬回覆", "幫我擬一封回覆這封信的草稿, 用原信的語言。先列出回覆要點(2~4 點), 再給完整的草稿。"],
+    ];
+    function aiButton(info) {
+      const wrap = h("span", "ml-ai-wrap");
+      const b = toolButton(ICON.ai, "AI 摘要 / 翻譯", (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+        if (!menu.hidden) setTimeout(() => document.addEventListener("click", () => (menu.hidden = true), { once: true }));
+      });
+      const menu = h("div", "ml-ai-menu");
+      menu.hidden = true;
+      for (const [key, title, prompt] of AI_TASKS) {
+        const it = h("button", "", title);
+        it.onclick = () => {
+          menu.hidden = true;
+          runAi(info, key, title, prompt);
+        };
+        menu.append(it);
+      }
+      wrap.append(b, menu);
+      return wrap;
+    }
+
+    async function runAi(info, key, title, prompt) {
+      const box = reader.querySelector(".ml-ai");
+      const frame = reader.querySelector(".ml-frame");
+      let text = "";
+      try {
+        const d = frame.contentDocument;
+        text = (d.getElementById("cng6-mail") || d.body).innerText || "";
+      } catch {}
+      if (!text.trim()) return toast("信件內容還沒載入", false);
+      if (text.length > 40000) text = `${text.slice(0, 40000)}\n…(後面省略)`;
+      const from = info.from ? `${info.from.name || ""} <${info.from.addr || ""}>` : "";
+      const body = `${prompt}\n\n主旨: ${info.subject || ""}\n寄件者: ${from}\n日期: ${when(info.date, true)}\n\n內文:\n${text}`;
+      box.hidden = false;
+      box.replaceChildren(h("div", "ml-ai-wait", `${title}中…`));
+      try {
+        const id = await AiApp.start(body, `${title}這封信: ${info.subject || "(沒有主旨)"}`);
+        if (!box.isConnected) return;
+        AiApp.inline(box, id, { onOpen: (cid) => AiApp.open(cid) });
+      } catch (e) {
+        box.replaceChildren(h("div", "ml-ai-wait err", e.message));
+      }
+    }
+
     function renderMessage(m, info, images) {
       const bar = backBar();
       const inTrash = folder.special === "trash" && !label;
@@ -626,7 +679,9 @@ const MailApp = (() => {
       try {
         gmail.href = `https://mail.google.com/mail/u/?authuser=${enc(a?.email || "")}#all/${BigInt(m.id).toString(16)}`;
       } catch {}
-      bar.append(h("span", "ml-spacer"), gmail);
+      bar.append(h("span", "ml-spacer"));
+      if (typeof AiApp !== "undefined") bar.append(aiButton(info));
+      bar.append(gmail);
 
       const head = h("div", "ml-head");
       head.append(h("h2", "ml-h-subject", info.subject || "(沒有主旨)"));
@@ -643,7 +698,9 @@ const MailApp = (() => {
       if (info.to.length) head.append(h("div", "ml-h-to", `收件者: ${fmt(info.to)}`));
       if (info.cc.length) head.append(h("div", "ml-h-to", `副本: ${fmt(info.cc)}`));
 
-      const parts = [bar, head];
+      const aiBox = h("div", "ml-ai");
+      aiBox.hidden = true;
+      const parts = [bar, head, aiBox];
       const trust = async (on) => {
         try {
           await req(api("/trust"), {

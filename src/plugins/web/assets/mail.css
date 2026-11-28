@@ -1112,3 +1112,62 @@
 .ml-root[data-device="mobile"] .ml-att {
   padding: 11px 12px;
 }
+
+/* AI 摘要 / 翻譯 */
+.ml-ai-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ml-ai-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--ml-line);
+  border-radius: 10px;
+  background: var(--ml-bg, #fff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.ml-ai-menu[hidden] {
+  display: none;
+}
+
+.ml-ai-menu button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+}
+
+.ml-ai-menu button:hover {
+  background: var(--ml-line);
+}
+
+.ml-ai {
+  margin: 0 18px;
+}
+
+.ml-ai[hidden] {
+  display: none;
+}
+
+.ml-ai-wait {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--ml-side);
+  color: var(--ml-text-2);
+  font-size: 13px;
+}
+
+.ml-ai-wait.err {
+  color: var(--ml-danger);
+}

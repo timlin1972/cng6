@@ -32,6 +32,8 @@ pub const SETTING_KEYS: &[&str] = &[
     "worldclock.zones",
     "wallpaper.current",
     "wallpaper.rotate",
+    "ai.node",
+    "ai.model",
 ];
 const STATE_FILE: &str = "cluster-sync.json";
 /// 連線後先等保留訊息到齊, 才開始送本機的資料

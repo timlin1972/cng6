@@ -408,7 +408,10 @@ const InvoiceApp = (() => {
         }
       };
       overlay.replaceChildren(box);
-      overlay.onclick = (e) => e.target === overlay && (overlay.hidden = true);
+      // 注意: onclick 回傳 false 會取消預設動作(「加入」送不出去), 所以要用大括號
+      overlay.onclick = (e) => {
+        if (e.target === overlay) overlay.hidden = true;
+      };
       box.querySelector('[name="number"]').focus();
     }
 

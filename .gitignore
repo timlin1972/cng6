@@ -72,3 +72,5 @@ web_key.pem
 *.ts.net.key
 /.tls-renew.*/
 web-push.json
+ai-key
+ai-chats.json
