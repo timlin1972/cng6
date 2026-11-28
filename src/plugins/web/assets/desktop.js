@@ -264,12 +264,15 @@ function track(e, onMove, onEnd) {
   const up = () => {
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
     document.body.classList.remove("dragging");
     onEnd && onEnd();
     saveGeom();
   };
   document.addEventListener("pointermove", move);
   document.addEventListener("pointerup", up);
+  // 觸控時瀏覽器接手(捲動、縮放)會送 pointercancel, 不會有 pointerup
+  document.addEventListener("pointercancel", up);
 }
 
 function startDrag(w, e) {

@@ -633,6 +633,47 @@ html {
 .resize.nw { top: -3px; left: -3px; cursor: nwse-resize; }
 .resize.se { bottom: -3px; right: -3px; cursor: nwse-resize; }
 
+/* 平板: 手指按住標題列、邊框時不要讓瀏覽器拿去捲動頁面, 不然拖一下就被取消 */
+.titlebar,
+.resize {
+  touch-action: none;
+}
+
+/* 平板: 手指比滑鼠粗, 改大小的邊框加寬 */
+@media (pointer: coarse) {
+  .resize.n,
+  .resize.s {
+    left: 16px;
+    right: 16px;
+    height: 16px;
+  }
+
+  .resize.e,
+  .resize.w {
+    top: 16px;
+    bottom: 16px;
+    width: 16px;
+  }
+
+  .resize.n { top: -8px; }
+  .resize.s { bottom: -8px; }
+  .resize.e { right: -8px; }
+  .resize.w { left: -8px; }
+
+  .resize.ne,
+  .resize.nw,
+  .resize.se,
+  .resize.sw {
+    width: 28px;
+    height: 28px;
+  }
+
+  .resize.ne { top: -8px; right: -8px; }
+  .resize.sw { bottom: -8px; left: -8px; }
+  .resize.nw { top: -8px; left: -8px; }
+  .resize.se { bottom: -8px; right: -8px; }
+}
+
 .window.maximized .resize {
   display: none;
 }
